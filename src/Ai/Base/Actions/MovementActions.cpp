@@ -3401,7 +3401,7 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
 
 void MovementAction::TeleportFallback(TravelPlan& state, WorldPosition target, char const* reason)
 {
-    LOG_INFO("playerbots", "[TravelPlan] Bot {} teleport fallback ({}): from map={} ({:.0f},{:.0f},{:.0f}) to map={} ({:.0f},{:.0f},{:.0f})",
+    LOG_DEBUG("playerbots", "[TravelPlan] Bot {} teleport fallback ({}): from map={} ({:.0f},{:.0f},{:.0f}) to map={} ({:.0f},{:.0f},{:.0f})",
         bot->GetName(), reason, bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), target.GetMapId(), target.GetPositionX(),
         target.GetPositionY(), target.GetPositionZ());
 
