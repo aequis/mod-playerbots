@@ -2454,6 +2454,15 @@ TravelNode* TravelNodeMap::GetNearestNodeInZone(WorldPosition pos, uint32 zoneId
     return bestNode;
 }
 
+std::vector<TravelNode*> const& TravelNodeMap::GetNodesInZone(uint32 zoneId) const
+{
+    static std::vector<TravelNode*> const empty;
+    auto it = m_zoneIndex.find(zoneId);
+    if (it == m_zoneIndex.end())
+        return empty;
+    return it->second;
+}
+
 TravelNode* TravelNodeMap::GetNearestNodeOnMap(WorldPosition pos)
 {
     auto it = m_mapIndex.find(pos.GetMapId());

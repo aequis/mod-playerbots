@@ -697,6 +697,10 @@ public:
     TravelNode* GetNearestNodeInZone(WorldPosition pos, uint32 zoneId);
     TravelNode* GetNearestNodeOnMap(WorldPosition pos);
 
+    // All nodes registered to a zone (post-BuildZoneIndex). Returns an
+    // empty static vector for unknown zones.
+    std::vector<TravelNode*> const& GetNodesInZone(uint32 zoneId) const;
+
     bool GetFullPath(TravelPlan& plan, WorldPosition botPos,
         uint32 botZoneId, WorldPosition destination);
 
