@@ -5,6 +5,7 @@
 
 #include "LootAction.h"
 
+#include "Bag.h"
 #include "ChatHelper.h"
 #include "Event.h"
 #include "GuildMgr.h"
@@ -139,8 +140,9 @@ bool OpenLootAction::DoLoot(LootObject& lootObject)
     if (go && (go->GetGoState() != GO_STATE_READY))
         return false;
 
-    // This prevents dungeon chests like Tribunal Chest (Halls of Stone) from being ninja'd by the bots
-    if (go && go->HasFlag(GAMEOBJECT_FLAGS, GO_FLAG_INTERACT_COND))
+    // Block event-gated chests (Tribunal Chest, Gunship Armory) but allow
+    // wild quest GOs (Moonpetal Lily etc.) when the bot is on the quest.
+    if (go && go->HasFlag(GAMEOBJECT_FLAGS, GO_FLAG_INTERACT_COND) && !lootObject.isNeededQuestItem)
         return false;
 
     // This prevents raid chests like Gunship Armory (ICC) from being ninja'd by the bots

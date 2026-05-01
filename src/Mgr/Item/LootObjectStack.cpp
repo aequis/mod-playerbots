@@ -45,7 +45,8 @@ void LootTargetList::shrink(time_t fromTime)
     }
 }
 
-LootObject::LootObject(Player* bot, ObjectGuid guid) : guid(), skillId(SKILL_NONE), reqSkillValue(0), reqItem(0)
+LootObject::LootObject(Player* bot, ObjectGuid guid)
+    : guid(), skillId(SKILL_NONE), reqSkillValue(0), reqItem(0), isNeededQuestItem(false)
 {
     Refresh(bot, guid);
 }
@@ -55,6 +56,7 @@ void LootObject::Refresh(Player* bot, ObjectGuid lootGUID)
     skillId = SKILL_NONE;
     reqSkillValue = 0;
     reqItem = 0;
+    isNeededQuestItem = false;
     guid.Clear();
 
     PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
@@ -101,6 +103,7 @@ void LootObject::Refresh(Player* bot, ObjectGuid lootGUID)
             if (IsNeededForQuest(bot, itemId))
             {
                 this->guid = lootGUID;
+                this->isNeededQuestItem = true;
                 return;
             }
 
@@ -135,10 +138,21 @@ void LootObject::Refresh(Player* bot, ObjectGuid lootGUID)
                 if (!proto)
                     continue;
 
+                // Moonpetal Lily, Hyacinth Mushroom etc. expose quest
+                // drops here (not in gameobject_questitem). Flag it so
+                // the INTERACT_COND gate lets the bot through.
+                if (IsNeededForQuest(bot, itemId))
+                {
+                    this->guid = lootGUID;
+                    this->isNeededQuestItem = true;
+                    return;
+                }
+
                 if (proto->Class != ITEM_CLASS_QUEST)
                 {
                     onlyHasQuestItems = false;
-                    break;
+                    // keep scanning — a later item may be needed
+                    continue;
                 }
 
                 // If this item references another loot table, process it
@@ -157,11 +171,15 @@ void LootObject::Refresh(Player* bot, ObjectGuid lootGUID)
                         if (!refProto)
                             continue;
 
-                        if (refProto->Class != ITEM_CLASS_QUEST)
+                        if (IsNeededForQuest(bot, refItemId))
                         {
-                            onlyHasQuestItems = false;
-                            break;
+                            this->guid = lootGUID;
+                            this->isNeededQuestItem = true;
+                            return;
                         }
+
+                        if (refProto->Class != ITEM_CLASS_QUEST)
+                            onlyHasQuestItems = false;
                     }
                 }
             }
@@ -270,6 +288,7 @@ LootObject::LootObject(LootObject const& other)
     skillId = other.skillId;
     reqSkillValue = other.reqSkillValue;
     reqItem = other.reqItem;
+    isNeededQuestItem = other.isNeededQuestItem;
 }
 
 bool LootObject::IsLootPossible(Player* bot)
@@ -299,10 +318,13 @@ bool LootObject::IsLootPossible(Player* bot)
             return false;
     }
 
-    // Prevent bot from running to chests that are unlootable (e.g. Gunship Armory before completing the event) or on
-    // respawn time
+    // Block event-gated chests (Gunship Armory pre-event) and unspawned
+    // GOs. INTERACT_COND alone is allowed when the GO holds a quest
+    // item we need — ConditionMgr already gates on quest state.
     GameObject* go = botAI->GetGameObject(guid);
-    if (go && (go->HasFlag(GAMEOBJECT_FLAGS, GO_FLAG_INTERACT_COND | GO_FLAG_NOT_SELECTABLE) || !go->isSpawned()))
+    if (go && (go->HasFlag(GAMEOBJECT_FLAGS, GO_FLAG_NOT_SELECTABLE) || !go->isSpawned()))
+        return false;
+    if (go && go->HasFlag(GAMEOBJECT_FLAGS, GO_FLAG_INTERACT_COND) && !isNeededQuestItem)
         return false;
 
     if (skillId == SKILL_NONE)

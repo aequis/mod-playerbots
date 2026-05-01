@@ -26,7 +26,7 @@ public:
 class LootObject
 {
 public:
-    LootObject() : skillId(0), reqSkillValue(0), reqItem(0) {}
+    LootObject() : skillId(0), reqSkillValue(0), reqItem(0), isNeededQuestItem(false) {}
     LootObject(Player* bot, ObjectGuid guid);
     LootObject(LootObject const& other);
     LootObject& operator=(LootObject const& other) = default;
@@ -40,6 +40,9 @@ public:
     uint32 skillId;
     uint32 reqSkillValue;
     uint32 reqItem;
+    // GO holds a quest item we still need; lets us bypass the
+    // INTERACT_COND blanket reject in the loot path
+    bool isNeededQuestItem;
 
 private:
     static bool IsNeededForQuest(Player* bot, uint32 itemId);
