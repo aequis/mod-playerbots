@@ -5,6 +5,8 @@
 
 #include "LootAction.h"
 
+#include <limits>
+
 #include "Bag.h"
 #include "ChatHelper.h"
 #include "Event.h"
@@ -379,6 +381,12 @@ bool StoreLootAction::Execute(Event event)
         // bot->GetSession()->HandleLootMoneyOpcode(packet);
     }
 
+    // one make-room destroy per loot packet — CanStoreNewItem after a junk
+    // destroy can still report full while CMSG_AUTOSTORE_LOOT_ITEM is
+    // queued, so a multi-quest-item packet would otherwise destroy more
+    // junk than necessary
+    bool destroyedThisPacket = false;
+
     for (uint8 i = 0; i < items; ++i)
     {
         uint32 itemid;
@@ -404,7 +412,9 @@ bool StoreLootAction::Execute(Event event)
         if (!proto)
             continue;
 
-        if (!botAI->HasActivePlayerMaster() && AI_VALUE(uint8, "bag space") > 80)
+        // bags >80%: skip non-stackable junk (quest items exempt)
+        if (!botAI->HasActivePlayerMaster() && AI_VALUE(uint8, "bag space") > 80 &&
+            !bot->HasQuestForItem(itemid))
         {
             uint32 maxStack = proto->GetMaxStackSize();
             if (maxStack == 1)
@@ -438,6 +448,55 @@ bool StoreLootAction::Execute(Event event)
                 for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
                     if (ref->GetSource() != bot)
                         GuildTaskMgr::instance().CheckItemTask(itemid, itemcount, ref->GetSource(), bot);
+        }
+
+        // bags full + quest item: make room by dropping cheapest junk
+        if (!destroyedThisPacket && bot->HasQuestForItem(itemid))
+        {
+            ItemPosCountVec dest;
+            InventoryResult can =
+                bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, itemid, itemcount);
+            if (can == EQUIP_ERR_INVENTORY_FULL || can == EQUIP_ERR_BAG_FULL)
+            {
+                // picked by usage, not quality — high-level bots have no grays
+                Item* victim = nullptr;
+                uint32 minPrice = std::numeric_limits<uint32>::max();
+                auto consider = [&](uint8 bag, uint8 slot)
+                {
+                    Item* it = bot->GetItemByPos(bag, slot);
+                    if (!it)
+                        return;
+                    ItemTemplate const* tpl = it->GetTemplate();
+                    if (!tpl)
+                        return;
+                    if (bot->HasQuestForItem(tpl->ItemId))
+                        return;
+                    ItemUsage usage = AI_VALUE2(ItemUsage, "item usage", tpl->ItemId);
+                    if (usage != ITEM_USAGE_NONE && usage != ITEM_USAGE_VENDOR &&
+                        usage != ITEM_USAGE_BAD_EQUIP && usage != ITEM_USAGE_BROKEN_EQUIP)
+                        return;
+                    if (tpl->SellPrice < minPrice)
+                    {
+                        minPrice = tpl->SellPrice;
+                        victim = it;
+                    }
+                };
+                for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+                    consider(INVENTORY_SLOT_BAG_0, slot);
+                for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+                {
+                    Bag* pBag = bot->GetBagByPos(bag);
+                    if (!pBag)
+                        continue;
+                    for (uint32 slot = 0; slot < pBag->GetBagSize(); ++slot)
+                        consider(bag, static_cast<uint8>(slot));
+                }
+                if (victim)
+                {
+                    bot->DestroyItem(victim->GetBagSlot(), victim->GetSlot(), true);
+                    destroyedThisPacket = true;
+                }
+            }
         }
 
         WorldPacket* packet = new WorldPacket(CMSG_AUTOSTORE_LOOT_ITEM, 1);
