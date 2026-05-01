@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
+#include <sstream>
 #include <string>
 
 #include "Corpse.h"
@@ -49,6 +50,159 @@ MovementAction::MovementAction(PlayerbotAI* botAI, std::string const name) : Act
     bot = botAI->GetBot();
 }
 
+void MovementAction::EmitDebugMove(char const* method, float x, float y, float z, char const* extra)
+{
+    if (!botAI->HasStrategy("debug move", BOT_STATE_NON_COMBAT))
+        return;
+
+    // Suppress the trace when we're already in flight toward this exact
+    // destination. Many entry points (Follow / ChaseTo / Flee /
+    // ReachCombatTo / ...) re-enter every tick from combat triggers and
+    // hand the same coords to MoveTo, which internally no-ops; firing
+    // EmitDebugMove before that no-op produces per-tick whisper spam.
+    {
+        LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+        if (bot->isMoving()
+            && bot->GetMapId() == lastMove.lastMoveToMapId
+            && std::fabs(lastMove.lastMoveToX - x) < 1.0f
+            && std::fabs(lastMove.lastMoveToY - y) < 1.0f
+            && std::fabs(lastMove.lastMoveToZ - z) < 1.0f)
+            return;
+    }
+
+    auto resolveName = [&](ObjectGuid guid) -> std::string
+    {
+        if (!guid)
+            return "";
+        if (WorldObject* obj = botAI->GetWorldObject(guid))
+            return obj->GetName();
+        return "";
+    };
+
+    NewRpgInfo& info = botAI->rpgInfo;
+    NewRpgStatus status = info.GetStatus();
+    char const* statusName =
+        status == RPG_IDLE ? "idle" :
+        status == RPG_GO_GRIND ? "go-grind" :
+        status == RPG_GO_CAMP ? "go-camp" :
+        status == RPG_WANDER_NPC ? "wander-npc" :
+        status == RPG_WANDER_RANDOM ? "wander-random" :
+        status == RPG_REST ? "rest" :
+        status == RPG_DO_QUEST ? "do-quest" :
+        status == RPG_TRAVEL_FLIGHT ? "travel-flight" :
+        status == RPG_OUTDOOR_PVP ? "outdoor-pvp" : "?";
+
+    // Resolve a human-readable target name from the RPG context. When
+    // we can name the target (quest objective, wander NPC, flight
+    // master, travel-node hop, etc.), it replaces the loc=(x,y,z)
+    // field — names are far more useful than coordinates. When no
+    // target can be named (combat moves, follow, flee, ad-hoc), we
+    // fall through to loc=(x,y,z).
+    std::string targetName;
+    switch (status)
+    {
+        case RPG_DO_QUEST:
+            if (auto* data = std::get_if<NewRpgInfo::DoQuest>(&info.data))
+            {
+                if (data->quest)
+                {
+                    bool turnIn = data->questId &&
+                        bot->GetQuestStatus(data->questId) == QUEST_STATUS_COMPLETE;
+                    if (turnIn)
+                    {
+                        std::ostringstream t;
+                        t << "turn-in:" << data->quest->GetTitle() << "(" << data->questId << ")";
+                        targetName = t.str();
+                    }
+                    else
+                    {
+                        Quest const* q = data->quest;
+                        QuestStatusData const& qs = bot->getQuestStatusMap().at(data->questId);
+                        std::string goal;
+                        for (int i = 0; i < QUEST_OBJECTIVES_COUNT; ++i)
+                        {
+                            int32 entry = q->RequiredNpcOrGo[i];
+                            if (entry != 0 && qs.CreatureOrGOCount[i] < q->RequiredNpcOrGoCount[i])
+                            {
+                                if (entry > 0)
+                                {
+                                    if (CreatureTemplate const* ct = sObjectMgr->GetCreatureTemplate(entry))
+                                        goal = "mob:" + ct->Name;
+                                }
+                                else
+                                {
+                                    if (GameObjectTemplate const* gt = sObjectMgr->GetGameObjectTemplate(-entry))
+                                        goal = "go:" + gt->name;
+                                }
+                                break;
+                            }
+                            uint32 item = q->RequiredItemId[i];
+                            if (item && bot->GetItemCount(item, true) < q->RequiredItemCount[i])
+                            {
+                                if (ItemTemplate const* it = sObjectMgr->GetItemTemplate(item))
+                                    goal = "item:" + it->Name1;
+                                break;
+                            }
+                        }
+                        if (goal.empty())
+                        {
+                            std::ostringstream t;
+                            t << "quest:" << q->GetTitle() << "(" << data->questId << ")";
+                            goal = t.str();
+                        }
+                        targetName = goal;
+                    }
+                }
+            }
+            break;
+        case RPG_WANDER_NPC:
+            if (auto* data = std::get_if<NewRpgInfo::WanderNpc>(&info.data))
+            {
+                std::string n = resolveName(data->npcOrGo);
+                if (!n.empty())
+                    targetName = "npc:" + n;
+            }
+            break;
+        case RPG_TRAVEL_FLIGHT:
+            if (auto* data = std::get_if<NewRpgInfo::TravelFlight>(&info.data))
+            {
+                if (CreatureTemplate const* ct = sObjectMgr->GetCreatureTemplate(data->flightMasterEntry))
+                    targetName = "flightmaster:" + ct->Name;
+            }
+            break;
+        case RPG_GO_GRIND: targetName = "grind-pos"; break;
+        case RPG_GO_CAMP: targetName = "camp-pos"; break;
+        case RPG_WANDER_RANDOM: targetName = "wander-random"; break;
+        default: break;
+    }
+
+    // Travel-plan override: when actively routing through the node
+    // graph, prefer the next-hop node name over any RPG-level target.
+    if (info.HasActiveTravelPlan())
+    {
+        TravelPlan const& plan = info.travelPlan;
+        if (plan.stepIdx < plan.steps.GetPathRef().size())
+        {
+            PathNodePoint const& pnt = plan.steps.GetPathRef()[plan.stepIdx];
+            if (pnt.type == PathNodeType::NODE_NODE || pnt.type == PathNodeType::NODE_PATH)
+            {
+                if (TravelNode* n = sTravelNodeMap.getNode(pnt.point, nullptr, 5.0f))
+                    targetName = "node:" + n->getName();
+            }
+        }
+    }
+
+    float dis = bot->GetExactDist(x, y, z);
+    std::ostringstream out;
+    out << "[MOVE] type=" << method << " | state=" << statusName
+        << " | dist=" << dis << "y"
+        << " | target=" << (targetName.empty() ? "-" : targetName.c_str());
+    if (extra && *extra)
+        out << " | " << extra;
+    botAI->TellMasterNoFacing(out);
+}
+
+
 void MovementAction::CreateWp(Player* wpOwner, float x, float y, float z, float o, uint32 entry, bool important)
 {
     float dist = wpOwner->GetDistance(x, y, z);
@@ -87,6 +241,7 @@ bool MovementAction::JumpTo(uint32 mapId, float x, float y, float z, MovementPri
 bool MovementAction::MoveNear(uint32 mapId, float x, float y, float z, float distance, MovementPriority priority)
 {
     float angle = GetFollowAngle();
+    EmitDebugMove("MoveNear:spline", x, y, z);
     return MoveTo(mapId, x + cos(angle) * distance, y + sin(angle) * distance, z, false, false, false, false, priority);
 }
 
@@ -130,6 +285,7 @@ bool MovementAction::MoveToLOS(WorldObject* target, bool ranged)
     float x = target->GetPositionX();
     float y = target->GetPositionY();
     float z = target->GetPositionZ();
+    EmitDebugMove("MoveToLOS:spline", x, y, z);
 
     // Use standard PathGenerator to find a route.
     PathResult path = GeneratePath(x, y, z, DEFAULT_PATH_ACCEPT_MASK, false);
@@ -853,8 +1009,15 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
 
     path.ShortenPathUntilDist(G3D::Vector3(tx, ty, tz), shortenTo);
     G3D::Vector3 endPos = path.GetPath().back();
-    return MoveTo(target->GetMapId(), endPos.x, endPos.y, endPos.z, false, false, false, false,
-                  MovementPriority::MOVEMENT_COMBAT, true);
+    bool moved = MoveTo(target->GetMapId(), endPos.x, endPos.y, endPos.z, false, false, false, false,
+                        MovementPriority::MOVEMENT_COMBAT, true);
+    // Only emit on a successful new commit — combat ticks call this
+    // many times per second and MoveTo internally suppresses while a
+    // prior spline is still playing. Emitting before the suppression
+    // check produces per-tick whisper spam.
+    if (moved)
+        EmitDebugMove("ReachCombatTo:spline", endPos.x, endPos.y, endPos.z);
+    return moved;
 }
 
 float MovementAction::GetFollowAngle()
@@ -1113,6 +1276,8 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
         return false;
     }
 
+    EmitDebugMove("Follow:spline", target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
+
     /*
     if (!bot->InBattleground()
         && ServerFacade::instance().IsDistanceLessOrEqualThan(ServerFacade::instance().GetDistance2d(bot, target->GetPositionX(),
@@ -1282,6 +1447,9 @@ bool MovementAction::ChaseTo(WorldObject* obj, float distance)
         return false;
     }
 
+    if (obj)
+        EmitDebugMove("ChaseTo:spline", obj->GetPositionX(), obj->GetPositionY(), obj->GetPositionZ());
+
     if (Vehicle* vehicle = bot->GetVehicle())
     {
         VehicleSeatEntry const* seat = vehicle->GetSeatForPassenger(bot);
@@ -1369,6 +1537,8 @@ bool MovementAction::Flee(Unit* target)
 
     if (!sPlayerbotAIConfig.fleeingEnabled)
         return false;
+
+    EmitDebugMove("Flee:spline", target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
 
     if (!IsMovingAllowed())
     {
@@ -1549,6 +1719,7 @@ bool MovementAction::MoveAway(Unit* target, float distance, bool backwards)
     {
         return false;
     }
+    EmitDebugMove("MoveAway:spline", target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
     float init_angle = target->GetAngle(bot);
     for (float delta = 0; delta <= M_PI / 2; delta += M_PI / 8)
     {
@@ -1628,6 +1799,7 @@ bool MovementAction::MoveFromGroup(float distance)
             y /= count;
             // x and y are now average position of the group members
             float angle = bot->GetAngle(x, y) + M_PI;
+            EmitDebugMove("MoveFromGroup:spline", x, y, bot->GetPositionZ());
             return Move(angle, distance - closestDist);
         }
     }
@@ -1656,6 +1828,7 @@ bool MovementAction::MoveInside(uint32 mapId, float x, float y, float z, float d
     {
         return false;
     }
+    EmitDebugMove("MoveInside:spline", x, y, z);
     return MoveNear(mapId, x, y, z, distance, priority);
 }
 
@@ -2244,6 +2417,7 @@ bool MovementAction::FleePosition(Position pos, float radius, uint32 minInterval
     }
     if (bestPos != Position())
     {
+        EmitDebugMove("FleePosition:spline", bestPos.GetPositionX(), bestPos.GetPositionY(), bestPos.GetPositionZ());
         if (MoveTo(bot->GetMapId(), bestPos.GetPositionX(), bestPos.GetPositionY(), bestPos.GetPositionZ(), false,
                    false, true, false, MovementPriority::MOVEMENT_COMBAT))
         {
@@ -3073,6 +3247,9 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
     state.splineStartTime = getMSTime();
     state.splineActive = true;
 
+    G3D::Vector3 const& last = state.walkPoints.back();
+    EmitDebugMove("TravelPlan:walk", last.x, last.y, last.z);
+
     return false;  // Walking
 }
 
@@ -3080,6 +3257,8 @@ bool MovementAction::MoveToSpline(TravelPlan& state, WorldPosition target)
 {
     if (!IsMovingAllowed())
         return false;
+
+    EmitDebugMove("TravelPlan:segment", target.GetPositionX(), target.GetPositionY(), target.GetPositionZ());
 
     // Generate path
     state.walkPoints.clear();
@@ -3121,6 +3300,11 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
 
     if (bot->IsInFlight())
         return true;
+
+    // Per-step labels (`walk`, `segment`, `flight`, `transport-*`,
+    // `teleport(reason)`) cover every actual movement decision; emitting
+    // an executor-ran-this-tick label here would whisper every tick
+    // while the plan is active.
 
     // Handle active spline
     if (state.splineActive)
@@ -3514,6 +3698,8 @@ bool MovementAction::BoardTransport(Transport* transport)
     {
         transport->AddPassenger(bot, true);
         bot->StopMovingOnCurrentPos();
+        EmitDebugMove("TravelPlan:transport-board", transport->GetPositionX(),
+                      transport->GetPositionY(), transport->GetPositionZ());
         return true;
     }
     // Not on surface — move toward the transport
@@ -3538,6 +3724,7 @@ bool MovementAction::BoardTransport(Transport* transport)
             bot->SetStandState(UNIT_STAND_STATE_STAND);
 
         mm->MovePoint(0, destX, destY, destZ, FORCED_MOVEMENT_NONE, 0.0f, 0.0f, false, false);
+        EmitDebugMove("TravelPlan:transport-walk", destX, destY, destZ);
     }
 
     return false;
