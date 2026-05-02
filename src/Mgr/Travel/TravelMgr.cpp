@@ -721,8 +721,18 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
         map->EnsureGridCreated(Acore::ComputeGridCoord(GetPositionX(), GetPositionY()));
     }
 
+    // Explicit-start overload (PathGenerator.h:67). Without this,
+    // CalculatePath(destX,destY,destZ) defaults to the unit's CURRENT
+    // position as start — which means every iteration of
+    // getPathFromPath's "chain" begins from the bot's same real
+    // location and produces the same ~296y partial path. The chain
+    // never advances. With explicit start, each step extends from the
+    // previous step's endpoint, giving the 40-attempt walker its
+    // intended multi-tile reach. Cmangos passes start explicitly too
+    // (WorldPosition.cpp:962 — pathfinder->calculate(start, end)).
     PathGenerator path(pathUnit);
-    path.CalculatePath(GetPositionX(), GetPositionY(), GetPositionZ());
+    path.CalculatePath(startPos.GetPositionX(), startPos.GetPositionY(), startPos.GetPositionZ(),
+                       GetPositionX(), GetPositionY(), GetPositionZ(), false);
 
     Movement::PointsArray points = path.GetPath();
     PathType type = path.GetPathType();

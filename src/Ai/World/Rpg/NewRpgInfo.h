@@ -76,11 +76,6 @@ struct NewRpgInfo
 
     uint32 startT{0};  // start timestamp of the current status
 
-    // MOVE_FAR
-    float nearestMoveFarDis{FLT_MAX};
-    uint32 stuckTs{0};
-    uint32 stuckAttempts{0};
-    WorldPosition moveFarPos;
     // Travel Node System
     TravelPlan travelPlan;
     bool HasActiveTravelPlan() const { return travelPlan.IsActive(); }
@@ -112,7 +107,6 @@ struct NewRpgInfo
     void ChangeToIdle();
     bool CanChangeTo(NewRpgStatus status);
     void Reset();
-    void SetMoveFarTo(WorldPosition pos);
     std::string ToString();
 };
 

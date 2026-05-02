@@ -1,5 +1,7 @@
 #include "NewRpgBaseAction.h"
 
+#include <sstream>
+
 #include "BroadcastHelper.h"
 #include "ChatHelper.h"
 #include "Creature.h"
@@ -37,16 +39,11 @@
 #include "Timer.h"
 #include "TravelMgr.h"
 
+
 bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
 {
     if (dest == WorldPosition())
         return false;
-
-    if (dest != botAI->rpgInfo.moveFarPos)
-    {
-        // clear stuck information if it's a new dest
-        botAI->rpgInfo.SetMoveFarTo(dest);
-    }
 
     // performance optimization
     if (IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
@@ -63,15 +60,12 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     // Without this gate, DoMovePoint would call mm->Clear() and
     // reissue MovePoint from the new bot position — and from a new
     // position mmap's partial-path endpoint often differs, so the
-    // bot gets clobbered mid-walk and ends up oscillating (e.g.
-    // cave entrance -> inside cave -> cave entrance -> mountain
-    // base -> cave entrance...) around an unreachable destination.
+    // bot gets clobbered mid-walk and ends up oscillating around an
+    // unreachable destination.
     //
     // If the bot is still actively walking toward its last
     // committed point on the same map, just let the current spline
-    // finish. The stuck counter below continues to track real
-    // progress toward dest and triggers teleport recovery if the
-    // committed paths genuinely aren't closing the gap.
+    // finish.
     {
         LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
         if (bot->isMoving() && lastMove.lastMoveToMapId == bot->GetMapId())
@@ -82,118 +76,107 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         }
     }
 
-    // stuck check
     float disToDest = bot->GetDistance(dest);
-    // Require a meaningful improvement (5yd) to reset the stuck counter.
-    // The old 1yd threshold was small enough that bots oscillating back
-    // and forth around an obstacle would keep "making progress" forever
-    // and never trigger the teleport recovery below.
-    if (disToDest + 5.0f < botAI->rpgInfo.nearestMoveFarDis)
-    {
-        botAI->rpgInfo.nearestMoveFarDis = disToDest;
-        botAI->rpgInfo.stuckTs = getMSTime();
-        botAI->rpgInfo.stuckAttempts = 0;
-    }
-    else if (++botAI->rpgInfo.stuckAttempts >= 5 && GetMSTimeDiffToNow(botAI->rpgInfo.stuckTs) >= stuckTime)
-    {
-        // No meaningful progress toward dest for `stuckTime`: fall
-        // back to teleporting directly so the bot can get on with
-        // its RPG objective instead of oscillating indefinitely.
-        botAI->rpgInfo.stuckTs = getMSTime();
-        botAI->rpgInfo.stuckAttempts = 0;
-        const AreaTableEntry* entry = sAreaTableStore.LookupEntry(bot->GetZoneId());
-        std::string zone_name = PlayerbotAI::GetLocalizedAreaName(entry);
-        LOG_DEBUG("playerbots","[New RPG] Teleport {} from ({},{},{},{}) to ({},{},{},{}) as it stuck when moving far - Zone: {} ({})",
-            bot->GetName(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetMapId(),
-            dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(), dest.GetMapId(), bot->GetZoneId(), zone_name);
-        botAI->TeleportTo(dest);
-        return true;
-    }
-
     float dis = bot->GetExactDist(dest);
 
-    // Long distance + travel nodes enabled: use the pre-computed node graph
-    // (A*, flight paths, transports) instead of repeated mmap hops.
-    if (dis > MAX_PATHFINDING_DISTANCE && sPlayerbotAIConfig.enableTravelNodes)
-    {
-        if (!botAI->rpgInfo.HasActiveTravelPlan())
-            StartTravelPlan(dest);
+    // Mirrors cmangos-playerbots' ResolveMovePath / getFullPath flow:
+    //
+    //   1. Active node plan? Ride it. The plan executor owns its own
+    //      per-step transitions (walk/flight/transport/teleport).
+    //
+    //   2. Otherwise, run the same 40-step chained mmap probe that
+    //      cmangos uses everywhere (TravelMgr.cpp:760, ported in PR
+    //      #2312 onto WorldPosition). It chains PathGenerator calls
+    //      across navmesh tiles so it reaches destinations far beyond
+    //      a single PathGenerator's ~296y smooth-path cap.
+    //
+    //   3. Probe lands within spellDistance of dest AND move is "long"
+    //      (>= nodeFirstDis): use mmap, skip the node graph. This is
+    //      cmangos's TravelNode.cpp:1894 short-circuit — and the fix
+    //      for the cave-quest case (when mmap CAN route into the
+    //      cave from current position, prefer that over the cached
+    //      surface-node detour).
+    //
+    //   4. Probe didn't reach AND move is long: commit to the
+    //      travel-node plan (graph A* + flights + transports).
+    //
+    //   5. Otherwise: walk to the probe's furthest reachable point.
+    //      Empty / non-progressing probe falls back to a best-effort
+    //      spline at the destination (cmangos line 720: addPoint).
+    //      Stuck-recovery (above) handles oscillation.
+    //
+    // No cone / random-direction sampling — cmangos doesn't do it and
+    // it tends to walk bots into geometry on the way to "stepping
+    // stones" that aren't on the actual route.
+    bool tryNodes = (dis >= nodeFirstDis && sPlayerbotAIConfig.enableTravelNodes);
 
+    // If a node plan is already active, ride it. The plan executor
+    // owns its own per-step transitions.
+    if (tryNodes && botAI->rpgInfo.HasActiveTravelPlan())
         return UpdateTravelPlan();
-    }
 
-    // Crossed below the travel-node threshold — clear any leftover plan
-    if (botAI->rpgInfo.HasActiveTravelPlan())
+    // 40-step chained mmap probe (cmangos getPathFromPath, ported in
+    // PR #2312 at TravelMgr.cpp:760). Heavier than a single
+    // GeneratePath call but matches cmangos's "same effort" baseline
+    // — chains PathGenerator calls across multiple navmesh tiles so
+    // it can reach destinations far beyond a single PathGenerator's
+    // ~296y smooth-path cap.
+    WorldPosition botPos(bot);
+    std::vector<WorldPosition> probe = botPos.getPathTo(dest, bot);
+    bool probeReachesDest = dest.isPathTo(probe, sPlayerbotAIConfig.spellDistance);
+
+    if (tryNodes && !probeReachesDest)
+    {
+        // Long-distance move and mmap couldn't get within spellDistance
+        // of the destination — commit to the travel-node graph
+        // (cmangos TravelNode.cpp:1907 buildPath branch).
+        StartTravelPlan(dest);
+        if (botAI->rpgInfo.HasActiveTravelPlan())
+        {
+            // Fire once on plan start so the user sees nodetravel as
+            // the chosen strategy. Per-step labels
+            // (TravelPlan:walk/segment/...) continue from the executor.
+            EmitDebugMove("MoveFar:nodetravel",
+                          dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
+            return UpdateTravelPlan();
+        }
+        // else: graph returned no plan — fall through to mmap best-effort
+    }
+    else if (botAI->rpgInfo.HasActiveTravelPlan())
+    {
+        // mmap probe is now close enough OR we crossed below the
+        // node-first threshold — drop any leftover plan from a prior tick.
         botAI->rpgInfo.ClearTravel();
-
-    // Short range: close enough for a single mmap call
-    if (dis < pathFinderDis)
-    {
-        return MoveTo(dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(), false, false,
-                      false, true);
     }
-    // Primary strategy: ask mmap for a route to the TRUE destination.
-    // If mmap can reach it directly (PATHFIND_NORMAL) or partially
-    // (PATHFIND_INCOMPLETE — destinations beyond the smooth-path cap
-    // of ~296 yards, or where local geometry blocks the final step),
-    // walk to the furthest reachable waypoint mmap computed. This
-    // lets bots follow the real route around obstacles (mountains,
-    // cave walls, cliffs) instead of trying to cut straight through.
-    // The spline system walks the whole returned path smoothly, so
-    // subsequent ticks early-out via IsWaitingForLastMove and no
-    // further PathGenerator calls fire until the bot arrives.
+
+    // Walk to the chained probe's furthest reachable point if it
+    // makes meaningful progress toward the destination. cmangos
+    // dispatches the full waypoint list via MovePath; we hand the
+    // endpoint to MoveTo and let the motion master plan its own
+    // spline. Functionally equivalent across multiple ticks
+    // (incremental progress).
+    if (!probe.empty())
     {
-        PathResult path = GeneratePath(dest.GetPositionX(), dest.GetPositionY(),
-            dest.GetPositionZ(), RELAXED_PATH_ACCEPT_MASK);
-        if (path.reachable)
+        WorldPosition stepDest = probe.back();
+        float endDistToDest = dest.GetExactDist(stepDest.GetPositionX(),
+            stepDest.GetPositionY(), stepDest.GetPositionZ());
+        if (endDistToDest + 5.0f < disToDest)
         {
-            // Only commit if the mmap endpoint actually makes progress
-            // toward the destination. For pathological INCOMPLETE
-            // results (e.g. disconnected polys that still report
-            // INCOMPLETE) the endpoint can land right under the bot;
-            // fall through to cone sampling in that case.
-            float endDistToDest = dest.GetExactDist(path.actualEnd.x, path.actualEnd.y, path.actualEnd.z);
-            if (endDistToDest + 5.0f < disToDest)
-                return MoveTo(bot->GetMapId(), path.actualEnd.x, path.actualEnd.y, path.actualEnd.z, false, false, false, true);
+            EmitDebugMove("MoveFar:mmap",
+                          stepDest.GetPositionX(), stepDest.GetPositionY(), stepDest.GetPositionZ());
+            return MoveTo(bot->GetMapId(), stepDest.GetPositionX(), stepDest.GetPositionY(),
+                          stepDest.GetPositionZ(), false, false, false, true);
         }
     }
 
-    // Fallback: mmap couldn't route to the destination. Sample the
-    // forward cone for a reachable stepping stone so the bot keeps
-    // moving and can try again from a new vantage point. Cap at 2
-    // samples — we already spent one PathGenerator call above and at
-    // 3000 bots every extra CalculatePath matters.
-    float minDelta = M_PI;
-    const float x = bot->GetPositionX();
-    const float y = bot->GetPositionY();
-    const float z = bot->GetPositionZ();
-    const float baseAngle = bot->GetAngle(&dest);
-    float rx, ry, rz;
-    bool found = false;
-    for (int attempt = 0; attempt < 2; ++attempt)
-    {
-        float delta = (rand_norm() - 0.5f) * static_cast<float>(M_PI);  // ±π/2, forward cone
-        float sampleDis = (0.5f + rand_norm() * 0.5f) * pathFinderDis;
-        float angle = baseAngle + delta;
-        float dx = x + cos(angle) * sampleDis;
-        float dy = y + sin(angle) * sampleDis;
-        float dz = z + 0.5f;
-        PathResult path = GeneratePath(dx, dy, dz, RELAXED_PATH_ACCEPT_MASK);
-
-        if (path.reachable && fabs(delta) <= minDelta)
-        {
-            found = true;
-            rx = path.actualEnd.x;
-            ry = path.actualEnd.y;
-            rz = path.actualEnd.z;
-            minDelta = fabs(delta);
-        }
-    }
-    if (found)
-    {
-        return MoveTo(bot->GetMapId(), rx, ry, rz, false, false, false, true);
-    }
-    return false;
+    // cmangos MovementActions.cpp:720 — empty / non-progressing path
+    // falls back to dispatching the destination as a single waypoint.
+    // Best-effort spline; stuck-recovery teleport (above) takes over
+    // if this oscillates.
+    EmitDebugMove("MoveFar:spline",
+                  dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
+    return MoveTo(dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(),
+                  false, false, false, true);
 }
 
 void NewRpgBaseAction::StartTravelPlan(WorldPosition dest)
@@ -219,16 +202,13 @@ bool NewRpgBaseAction::UpdateTravelPlan()
 
 bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
 {
-    if (IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
-        return false;
-
     WorldObject* object = botAI->GetWorldObject(guid);
     if (!object)
         return false;
+
     float x = object->GetPositionX();
     float y = object->GetPositionY();
     float z = object->GetPositionZ();
-    float mapId = object->GetMapId();
     float angle = 0.f;
 
     if (!object->ToUnit() || !object->ToUnit()->isMoving())
@@ -247,7 +227,14 @@ bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
         y = object->GetPositionY();
         z = object->GetPositionZ();
     }
-    return MoveTo(mapId, x, y, z, false, false, false, true);
+    // Delegate to MoveFarTo so every approach gets the cmangos-aligned
+    // chained mmap probe + spellDistance shortcut + travel-node
+    // fallback, instead of a single direct MoveTo. The debug-move
+    // trace then labels the actual mechanism (spline / mmap /
+    // nodetravel) rather than a generic "MoveWorldObjectTo:spline".
+    // (cmangos: refactor(Move): Route MoveWorldObjectTo through
+    // MoveFarTo — 4cb3abab.)
+    return MoveFarTo(WorldPosition(object->GetMapId(), x, y, z));
 }
 
 bool NewRpgBaseAction::MoveRandomNear(float moveStep, MovementPriority priority, WorldObject* center)
@@ -285,7 +272,10 @@ bool NewRpgBaseAction::MoveRandomNear(float moveStep, MovementPriority priority,
 
         bool moved = MoveTo(bot->GetMapId(), dx, dy, dz, false, false, false, true, priority);
         if (moved)
+        {
+            EmitDebugMove("MoveRandomNear:spline", dx, dy, dz);
             return true;
+        }
     }
 
     return false;
@@ -317,6 +307,8 @@ bool NewRpgBaseAction::TakeFlight(std::vector<uint32> const& taxiNodes, Creature
 
     LOG_DEBUG("playerbots", "[New RPG] Bot {} taking flight ({} nodes, {} to {})",
               bot->GetName(), taxiNodes.size(), taxiNodes.front(), taxiNodes.back());
+    EmitDebugMove("TravelPlan:flight", flightMaster->GetPositionX(), flightMaster->GetPositionY(),
+                  flightMaster->GetPositionZ());
     return true;
 }
 

@@ -78,15 +78,14 @@ protected:
 
 protected:
     /* FOR MOVE FAR */
-    const float pathFinderDis = 70.0f;
-    // Time without real progress toward dest before MoveFarTo
-    // falls back to teleport recovery. Kept short enough that a
-    // bot truly oscillating around an unreachable destination
-    // (mmap returning non-progressing partial paths, or NOPATH +
-    // cone fallback wandering) doesn't spin for 5 minutes before
-    // the teleport fires, but long enough that a genuine long
-    // walk that is slowly making progress never triggers it.
-    const uint32 stuckTime = 90 * 1000;
+    // Distance at which MoveFarTo considers the travel-node graph as
+    // a routing option. Below this, the move is short enough that
+    // mmap handles it directly. Above this, mmap is *still probed
+    // first* via the 40-step chained pathfinder; the node graph only
+    // takes over if mmap can't get within spellDistance of the
+    // destination. Matches cmangos-playerbots' sightDistance gate
+    // (75y) — the only long-path threshold they use.
+    const float nodeFirstDis = 75.0f;
 
 private:
     void StartTravelPlan(WorldPosition dest);

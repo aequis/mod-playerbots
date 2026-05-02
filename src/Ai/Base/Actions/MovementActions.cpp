@@ -3231,6 +3231,19 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
         return true;
     }
 
+    // Re-clamp cached waypoints to current valid Z. Rows in
+    // playerbots_travelnode_path store absolute coords baked at offline
+    // generation; if the live navmesh has shifted since (mmap regen,
+    // terrain change, vmap update), the stored z can be above ground —
+    // MoveSplinePath plays back coords verbatim and the bot looks like
+    // it's walking through the air. UpdateAllowedPositionZ is the same
+    // per-waypoint snap cmangos-playerbots applies in DispatchMovement
+    // (MovementActions.cpp:1006); it factors mmap polygon Z, water
+    // surface, swimming, flying and transport state, so cave floors
+    // above the terrain plane snap correctly.
+    for (auto& pt : state.walkPoints)
+        bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
+
     // Mount up
     if (!bot->IsMounted() && !bot->IsInCombat() && bot->IsOutdoors() && bot->IsAlive())
         botAI->DoSpecificAction("check mount state", Event(), true);
