@@ -13,6 +13,10 @@
 #include "Item.h"
 #include "ItemTemplate.h"
 #include "LootMgr.h"
+#include "Map.h"
+#include "ModelIgnoreFlags.h"
+#include "MotionMaster.h"
+#include "MoveSplineInitArgs.h"
 #include "NewRpgInfo.h"
 #include "NewRpgStrategy.h"
 #include "Object.h"
@@ -45,6 +49,38 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     if (dest == WorldPosition())
         return false;
 
+    // Off-mmap recovery. Probe a 1y-offset destination to detect if
+    // the bot's current position has a valid mmap polygon.
+    // PATHFIND_FARFROMPOLY_START in the result type means start is
+    // off-mesh (fell through floor, knocked off map, glitched inside
+    // terrain). Without this, the chained probe returns NOPATH and
+    // the motion master falls back to a straight 3D spline =
+    // diagonal through air. Snap Z to nearest valid ground via vmap
+    // raycast and NearTeleport so the next MoveFarTo runs from a
+    // sane position.
+    {
+        PathGenerator probeGen(bot);
+        probeGen.CalculatePath(bot->GetPositionX() + 1.0f, bot->GetPositionY(),
+            bot->GetPositionZ(), false);
+        if (probeGen.GetPathType() & PATHFIND_FARFROMPOLY_START)
+        {
+            float groundZ = bot->GetMap()->GetHeight(bot->GetPhaseMask(),
+                bot->GetPositionX(), bot->GetPositionY(), MAX_HEIGHT, true);
+            if (groundZ > INVALID_HEIGHT && std::fabs(groundZ - bot->GetPositionZ()) > 1.0f)
+            {
+                LOG_INFO("playerbots",
+                    "[MoveFar] {} OFF-MMAP recovery: snapping ({:.0f},{:.0f},{:.0f}) -> z={:.0f}",
+                    bot->GetName(), bot->GetPositionX(), bot->GetPositionY(),
+                    bot->GetPositionZ(), groundZ);
+                bot->NearTeleportTo(bot->GetPositionX(), bot->GetPositionY(), groundZ,
+                    bot->GetOrientation());
+            }
+            // Skip this tick — re-enter next tick from the snapped
+            // position so the chained probe has a valid start poly.
+            return false;
+        }
+    }
+
     // performance optimization
     if (IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
     {
@@ -73,6 +109,28 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
             float remaining = bot->GetExactDist(lastMove.lastMoveToX, lastMove.lastMoveToY, lastMove.lastMoveToZ);
             if (remaining > 10.0f)
                 return true;
+        }
+    }
+
+    // 10% lastPath reuse (cmangos MovementActions.cpp:687-689). If
+    // the cached path's endpoint is within 10% of the new dest's
+    // distance AND the bot is still mid-flight toward it, skip the
+    // chained-probe recompute entirely. The 10y guard ensures we
+    // don't reuse a finished path (where the bot has already
+    // arrived at the cached endpoint).
+    {
+        LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+        if (!lastMove.lastPath.empty())
+        {
+            WorldPosition lastBack = lastMove.lastPath.getBack();
+            if (lastBack.GetMapId() == dest.GetMapId())
+            {
+                float totalDist = bot->GetExactDist(dest);
+                float maxDistChange = totalDist * 0.10f;
+                float distFromBotToBack = bot->GetExactDist(&lastBack);
+                if (lastBack.distance(dest) < maxDistChange && distFromBotToBack > 10.0f)
+                    return true;  // motion master is still walking it
+            }
         }
     }
 
@@ -194,35 +252,127 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         botAI->rpgInfo.ClearTravel();
     }
 
-    // Walk to the chained probe's furthest reachable point if it
-    // makes meaningful progress toward the destination. cmangos
-    // dispatches the full waypoint list via MovePath; we hand the
-    // endpoint to MoveTo and let the motion master plan its own
-    // spline. Functionally equivalent across multiple ticks
-    // (incremental progress).
-    // Skip when both routing strategies have failed 3 times each —
-    // the probe is deterministic so it'd just lead back to the same
-    // dead end. Fall through to spline at the dest.
-    if (!probe.empty() && !bothExhausted)
+    // Walk the chained probe's full waypoint chain via MoveSplinePath
+    // — cmangos's DispatchMovement pattern (MovementActions.cpp:1014:
+    // mm.MovePath(pointPath, moveMode, false)). Handing the FULL
+    // waypoint vector to the motion master removes its discretion
+    // to introduce a straight-line shortcut between intermediate
+    // points (which is what produced the diagonal-through-air bug
+    // when we used MoveTo(endpoint) and let the motion master replan).
+    // Skip when both routing strategies have failed 3 times each.
+    if (!probe.empty() && !bothExhausted && probe.size() >= 2)
     {
         WorldPosition stepDest = probe.back();
         float endDistToDest = dest.GetExactDist(stepDest.GetPositionX(),
             stepDest.GetPositionY(), stepDest.GetPositionZ());
         if (endDistToDest + 5.0f < disToDest)
         {
-            LOG_INFO("playerbots", "[MoveFar] {} mmap | dest=({:.0f},{:.0f},{:.0f}) | dis={:.0f} | end=({:.0f},{:.0f},{:.0f}) endDist={:.0f} | mmapFails={} nodeFails={} | flags={}{}{}",
-                bot->GetName(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(), dis,
-                stepDest.GetPositionX(), stepDest.GetPositionY(), stepDest.GetPositionZ(), endDistToDest,
-                botAI->rpgInfo.CountRecentAttempts(dest, false),
-                botAI->rpgInfo.CountRecentAttempts(dest, true),
-                forceMmapOverNodes ? "F-mmap " : "",
-                forceNodesOverMmap ? "F-nodes " : "",
-                bothExhausted ? "EXHAUST " : "");
-            EmitDebugMove("MoveFar:mmap",
-                          stepDest.GetPositionX(), stepDest.GetPositionY(), stepDest.GetPositionZ());
-            botAI->rpgInfo.RecordMoveFarAttempt(dest, /*wasNodeTravel=*/false);
-            return MoveTo(bot->GetMapId(), stepDest.GetPositionX(), stepDest.GetPositionY(),
-                          stepDest.GetPositionZ(), false, false, false, true);
+            // Convert WorldPosition probe to G3D::Vector3 array.
+            Movement::PointsArray points;
+            points.reserve(probe.size());
+            for (auto const& wp : probe)
+                points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
+
+            // Per-waypoint Z-snap (cmangos DispatchMovement:1006).
+            for (auto& pt : points)
+                bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
+
+            // Drop waypoints whose segment crosses geometry (Fix B
+            // logic, mirrored from LaunchWalkSpline). A pair of
+            // ground-level waypoints with a mountain between them
+            // would otherwise spline straight through.
+            if (Map* losMap = bot->GetMap())
+            {
+                uint32 const phaseMask = bot->GetPhaseMask();
+                for (size_t i = 1; i < points.size(); /* incremented in body */)
+                {
+                    G3D::Vector3 const& a = points[i - 1];
+                    G3D::Vector3 const& b = points[i];
+                    if (!losMap->isInLineOfSight(a.x, a.y, a.z + 2.0f,
+                            b.x, b.y, b.z + 2.0f, phaseMask, LINEOFSIGHT_ALL_CHECKS,
+                            VMAP::ModelIgnoreFlags::Nothing))
+                    {
+                        points.erase(points.begin() + i);
+                        continue;
+                    }
+                    ++i;
+                }
+            }
+
+            if (points.size() >= 2)
+            {
+                // No-worse lastPath reuse (cmangos MovementActions.cpp:716-717).
+                // If the cached path's endpoint is no further from
+                // dest than this new probe's, prefer cached to
+                // prevent path-swapping mid-walk. Same 10y guard as
+                // the top-of-MoveFarTo reuse to avoid reusing a
+                // finished path the bot already arrived at.
+                {
+                    LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+                    if (!lastMove.lastPath.empty())
+                    {
+                        WorldPosition lastBack = lastMove.lastPath.getBack();
+                        if (lastBack.GetMapId() == dest.GetMapId())
+                        {
+                            float lastBackDist = lastBack.distance(dest);
+                            G3D::Vector3 const& newBack = points.back();
+                            float newBackDist = dest.GetExactDist(newBack.x, newBack.y, newBack.z);
+                            float distFromBotToBack = bot->GetExactDist(&lastBack);
+                            if (lastBackDist <= newBackDist && distFromBotToBack > 10.0f)
+                                return true;  // cached is no worse, motion master still walking it
+                        }
+                    }
+                }
+
+                LOG_INFO("playerbots", "[MoveFar] {} mmap-path | dest=({:.0f},{:.0f},{:.0f}) | dis={:.0f} | end=({:.0f},{:.0f},{:.0f}) endDist={:.0f} | wp={} | mmapFails={} nodeFails={} | flags={}{}{}",
+                    bot->GetName(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(), dis,
+                    points.back().x, points.back().y, points.back().z, endDistToDest,
+                    (uint32)points.size(),
+                    botAI->rpgInfo.CountRecentAttempts(dest, false),
+                    botAI->rpgInfo.CountRecentAttempts(dest, true),
+                    forceMmapOverNodes ? "F-mmap " : "",
+                    forceNodesOverMmap ? "F-nodes " : "",
+                    bothExhausted ? "EXHAUST " : "");
+                EmitDebugMove("MoveFar:mmap",
+                              points.back().x, points.back().y, points.back().z);
+                botAI->rpgInfo.RecordMoveFarAttempt(dest, /*wasNodeTravel=*/false);
+
+                // Mount up if outdoors and not in combat (mirrors
+                // LaunchWalkSpline behaviour).
+                if (!bot->IsMounted() && !bot->IsInCombat() && bot->IsOutdoors() && bot->IsAlive())
+                    botAI->DoSpecificAction("check mount state", Event(), true);
+
+                // Dispatch the FULL waypoint chain. Motion master
+                // can't take a shortcut — it walks every point.
+                bot->GetMotionMaster()->Clear();
+                bot->GetMotionMaster()->MoveSplinePath(&points, FORCED_MOVEMENT_RUN);
+
+                // Update LastMovement so the spline-active early-out
+                // at the top of MoveFarTo knows where we're heading
+                // and won't recompute the path mid-walk.
+                G3D::Vector3 const& last = points.back();
+                float totalDist = 0.f;
+                for (size_t i = 1; i < points.size(); ++i)
+                    totalDist += (points[i] - points[i - 1]).length();
+                float speed = std::max(bot->GetSpeed(MOVE_RUN), 0.1f);
+                uint32 expectedMs = static_cast<uint32>((totalDist / speed) * IN_MILLISECONDS);
+                uint32 cappedMs = std::min(expectedMs, (uint32)sPlayerbotAIConfig.maxWaitForMove);
+                LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+                lastMove.Set(bot->GetMapId(),
+                    last.x, last.y, last.z, bot->GetOrientation(), cappedMs,
+                    MovementPriority::MOVEMENT_NORMAL);
+
+                // Cache dispatched waypoints so the next MoveFarTo
+                // tick can satisfy the 10% / no-worse reuse checks
+                // (cmangos MovementActions.cpp:687, 716).
+                std::vector<WorldPosition> wpts;
+                wpts.reserve(points.size());
+                for (auto const& pt : points)
+                    wpts.emplace_back(bot->GetMapId(), pt.x, pt.y, pt.z);
+                lastMove.setPath(TravelPath(wpts));
+
+                return true;
+            }
         }
     }
 
@@ -241,8 +391,10 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     EmitDebugMove("MoveFar:spline",
                   dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
     botAI->rpgInfo.RecordMoveFarAttempt(dest, /*wasNodeTravel=*/false);
+    // Same exact_waypoint=false rationale as the mmap branch — terrain-
+    // following spline, not a straight diagonal.
     return MoveTo(dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(),
-                  false, false, false, true);
+                  false, false, false, false);
 }
 
 void NewRpgBaseAction::StartTravelPlan(WorldPosition dest)

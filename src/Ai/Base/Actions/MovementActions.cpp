@@ -20,6 +20,7 @@
 #include "LastMovementValue.h"
 #include "LootObjectStack.h"
 #include "Map.h"
+#include "ModelIgnoreFlags.h"
 #include "MotionMaster.h"
 #include "MoveSpline.h"
 #include "MoveSplineInitArgs.h"
@@ -3244,6 +3245,39 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
     for (auto& pt : state.walkPoints)
         bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
 
+    // Drop waypoints whose segment from the previous point crosses
+    // solid geometry. Z-snapping each point to ground is necessary
+    // but not sufficient — two ground-level waypoints A and B with a
+    // mountain between them produce a spline that linearly
+    // interpolates straight through the mountain. vmap LoS check on
+    // each segment catches that. We only drop the offending B
+    // (skipping it) — if A→C is also blocked, the loop drops C too,
+    // until either the path becomes contiguous or empties out.
+    if (Map* losMap = bot->GetMap())
+    {
+        uint32 const phaseMask = bot->GetPhaseMask();
+        for (size_t i = 1; i < state.walkPoints.size(); /* incremented in body */)
+        {
+            G3D::Vector3 const& a = state.walkPoints[i - 1];
+            G3D::Vector3 const& b = state.walkPoints[i];
+            // +2y on Z so the raycast starts/ends near the bot's
+            // chest level rather than ground (avoids false positives
+            // from sub-floor poly).
+            if (!losMap->isInLineOfSight(a.x, a.y, a.z + 2.0f, b.x, b.y, b.z + 2.0f,
+                    phaseMask, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing))
+            {
+                state.walkPoints.erase(state.walkPoints.begin() + i);
+                continue;
+            }
+            ++i;
+        }
+        if (state.walkPoints.size() < 2)
+        {
+            state.walkPoints.clear();
+            return true;
+        }
+    }
+
     // Mount up
     if (!bot->IsMounted() && !bot->IsInCombat() && bot->IsOutdoors() && bot->IsAlive())
         botAI->DoSpecificAction("check mount state", Event(), true);
@@ -3261,6 +3295,28 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
     state.splineActive = true;
 
     G3D::Vector3 const& last = state.walkPoints.back();
+
+    // Update LastMovement so MoveFarTo's spline-active early-out
+    // knows about this in-flight walk and won't recompute the path
+    // mid-spline. Mirror what MoveTo does after dispatching a spline.
+    {
+        float delay = static_cast<float>(state.expectedDuration);
+        delay = std::min(delay, static_cast<float>(sPlayerbotAIConfig.maxWaitForMove));
+        delay = std::max(delay, 0.f);
+        LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+        lastMove.Set(bot->GetMapId(), last.x, last.y, last.z,
+            bot->GetOrientation(), delay, MovementPriority::MOVEMENT_NORMAL);
+
+        // Cache the dispatched waypoint chain so MoveFarTo's 10%
+        // lastPath reuse (cmangos MovementActions.cpp:687) and the
+        // "no worse" reuse (line 716) can pick it up next tick.
+        std::vector<WorldPosition> wpts;
+        wpts.reserve(state.walkPoints.size());
+        for (auto const& pt : state.walkPoints)
+            wpts.emplace_back(bot->GetMapId(), pt.x, pt.y, pt.z);
+        lastMove.setPath(TravelPath(wpts));
+    }
+
     EmitDebugMove("TravelPlan:walk", last.x, last.y, last.z);
 
     return false;  // Walking
