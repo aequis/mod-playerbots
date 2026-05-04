@@ -198,7 +198,7 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
             // Fire once on plan start so the user sees nodetravel as
             // the chosen strategy. Per-step labels
             // (TravelPlan:walk/segment/...) continue from the executor.
-            EmitDebugMove("MoveFar:nodetravel",
+            EmitDebugMove("MoveFar", "travelplan",
                           dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
             botAI->rpgInfo.RecordMoveFarAttempt(dest, /*wasNodeTravel=*/true);
             return UpdateTravelPlan();
@@ -293,7 +293,7 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
                     forceMmapOverNodes ? "F-mmap " : "",
                     forceNodesOverMmap ? "F-nodes " : "",
                     bothExhausted ? "EXHAUST " : "");
-                EmitDebugMove("MoveFar:mmap",
+                EmitDebugMove("MoveFar", "mmap",
                               points.back().x, points.back().y, points.back().z);
                 botAI->rpgInfo.RecordMoveFarAttempt(dest, /*wasNodeTravel=*/false);
 
@@ -347,7 +347,7 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         forceMmapOverNodes ? "F-mmap " : "",
         forceNodesOverMmap ? "F-nodes " : "",
         bothExhausted ? "EXHAUST " : "");
-    EmitDebugMove("MoveFar:spline",
+    EmitDebugMove("MoveFar", "spline",
                   dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
     botAI->rpgInfo.RecordMoveFarAttempt(dest, /*wasNodeTravel=*/false);
     // Same exact_waypoint=false rationale as the mmap branch — terrain-
@@ -448,7 +448,7 @@ bool NewRpgBaseAction::MoveRandomNear(float moveStep, MovementPriority priority,
         bool moved = MoveTo(bot->GetMapId(), dx, dy, dz, false, false, false, true, priority);
         if (moved)
         {
-            EmitDebugMove("MoveRandomNear:spline", dx, dy, dz);
+            EmitDebugMove("MoveRandomNear", "mmap", dx, dy, dz);
             return true;
         }
     }
@@ -482,7 +482,7 @@ bool NewRpgBaseAction::TakeFlight(std::vector<uint32> const& taxiNodes, Creature
 
     LOG_DEBUG("playerbots", "[New RPG] Bot {} taking flight ({} nodes, {} to {})",
               bot->GetName(), taxiNodes.size(), taxiNodes.front(), taxiNodes.back());
-    EmitDebugMove("TravelPlan:flight", flightMaster->GetPositionX(), flightMaster->GetPositionY(),
+    EmitDebugMove("TravelPlan:flight", "taxi", flightMaster->GetPositionX(), flightMaster->GetPositionY(),
                   flightMaster->GetPositionZ());
     return true;
 }

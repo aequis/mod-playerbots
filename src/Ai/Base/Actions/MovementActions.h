@@ -48,7 +48,7 @@ protected:
     // context such as RPG status and target name. Optional `extra`
     // is appended verbatim (use it to attach hop labels like
     // "node:Stormwind innkeeper" or fallback reasons).
-    virtual void EmitDebugMove(char const* method, float x, float y, float z, char const* extra = nullptr);
+    virtual void EmitDebugMove(char const* method, char const* generator, float x, float y, float z, char const* extra = nullptr);
 
     bool JumpTo(uint32 mapId, float x, float y, float z, MovementPriority priority = MovementPriority::MOVEMENT_NORMAL);
     bool MoveNear(uint32 mapId, float x, float y, float z, float distance = sPlayerbotAIConfig.contactDistance,

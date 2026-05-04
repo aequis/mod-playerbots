@@ -51,25 +51,10 @@ MovementAction::MovementAction(PlayerbotAI* botAI, std::string const name) : Act
     bot = botAI->GetBot();
 }
 
-void MovementAction::EmitDebugMove(char const* method, float x, float y, float z, char const* extra)
+void MovementAction::EmitDebugMove(char const* method, char const* generator, float x, float y, float z, char const* extra)
 {
     if (!botAI->HasStrategy("debug move", BOT_STATE_NON_COMBAT))
         return;
-
-    // Suppress the trace when we're already in flight toward this exact
-    // destination. Many entry points (Follow / ChaseTo / Flee /
-    // ReachCombatTo / ...) re-enter every tick from combat triggers and
-    // hand the same coords to MoveTo, which internally no-ops; firing
-    // EmitDebugMove before that no-op produces per-tick whisper spam.
-    {
-        LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
-        if (bot->isMoving()
-            && bot->GetMapId() == lastMove.lastMoveToMapId
-            && std::fabs(lastMove.lastMoveToX - x) < 1.0f
-            && std::fabs(lastMove.lastMoveToY - y) < 1.0f
-            && std::fabs(lastMove.lastMoveToZ - z) < 1.0f)
-            return;
-    }
 
     auto resolveName = [&](ObjectGuid guid) -> std::string
     {
@@ -195,9 +180,11 @@ void MovementAction::EmitDebugMove(char const* method, float x, float y, float z
 
     float dis = bot->GetExactDist(x, y, z);
     std::ostringstream out;
-    out << "[MOVE] type=" << method << " | state=" << statusName
-        << " | dist=" << dis << "y"
-        << " | target=" << (targetName.empty() ? "-" : targetName.c_str());
+    out << "[MOVE] meth=" << method
+        << " | via=" << (generator && *generator ? generator : "-")
+        << " | rpg=" << statusName
+        << " | d=" << dis << "y"
+        << " | targ=" << (targetName.empty() ? "-" : targetName.c_str());
     if (extra && *extra)
         out << " | " << extra;
     botAI->TellMasterNoFacing(out);
@@ -242,7 +229,7 @@ bool MovementAction::JumpTo(uint32 mapId, float x, float y, float z, MovementPri
 bool MovementAction::MoveNear(uint32 mapId, float x, float y, float z, float distance, MovementPriority priority)
 {
     float angle = GetFollowAngle();
-    EmitDebugMove("MoveNear:spline", x, y, z);
+    EmitDebugMove("MoveNear", "mmap", x, y, z);
     return MoveTo(mapId, x + cos(angle) * distance, y + sin(angle) * distance, z, false, false, false, false, priority);
 }
 
@@ -286,7 +273,7 @@ bool MovementAction::MoveToLOS(WorldObject* target, bool ranged)
     float x = target->GetPositionX();
     float y = target->GetPositionY();
     float z = target->GetPositionZ();
-    EmitDebugMove("MoveToLOS:spline", x, y, z);
+    EmitDebugMove("MoveToLOS", "mmap", x, y, z);
 
     // Use standard PathGenerator to find a route.
     PathResult path = GeneratePath(x, y, z, DEFAULT_PATH_ACCEPT_MASK, false);
@@ -1017,7 +1004,7 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
     // prior spline is still playing. Emitting before the suppression
     // check produces per-tick whisper spam.
     if (moved)
-        EmitDebugMove("ReachCombatTo:spline", endPos.x, endPos.y, endPos.z);
+        EmitDebugMove("ReachCombatTo", "mmap", endPos.x, endPos.y, endPos.z);
     return moved;
 }
 
@@ -1277,7 +1264,7 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
         return false;
     }
 
-    EmitDebugMove("Follow:spline", target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
+    EmitDebugMove("Follow", "follow", target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
 
     /*
     if (!bot->InBattleground()
@@ -1449,7 +1436,7 @@ bool MovementAction::ChaseTo(WorldObject* obj, float distance)
     }
 
     if (obj)
-        EmitDebugMove("ChaseTo:spline", obj->GetPositionX(), obj->GetPositionY(), obj->GetPositionZ());
+        EmitDebugMove("ChaseTo", "chase", obj->GetPositionX(), obj->GetPositionY(), obj->GetPositionZ());
 
     if (Vehicle* vehicle = bot->GetVehicle())
     {
@@ -1539,7 +1526,7 @@ bool MovementAction::Flee(Unit* target)
     if (!sPlayerbotAIConfig.fleeingEnabled)
         return false;
 
-    EmitDebugMove("Flee:spline", target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
+    EmitDebugMove("Flee", "flee", target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
 
     if (!IsMovingAllowed())
     {
@@ -1720,7 +1707,7 @@ bool MovementAction::MoveAway(Unit* target, float distance, bool backwards)
     {
         return false;
     }
-    EmitDebugMove("MoveAway:spline", target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
+    EmitDebugMove("MoveAway", "mmap", target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
     float init_angle = target->GetAngle(bot);
     for (float delta = 0; delta <= M_PI / 2; delta += M_PI / 8)
     {
@@ -1800,7 +1787,7 @@ bool MovementAction::MoveFromGroup(float distance)
             y /= count;
             // x and y are now average position of the group members
             float angle = bot->GetAngle(x, y) + M_PI;
-            EmitDebugMove("MoveFromGroup:spline", x, y, bot->GetPositionZ());
+            EmitDebugMove("MoveFromGroup", "mmap", x, y, bot->GetPositionZ());
             return Move(angle, distance - closestDist);
         }
     }
@@ -1829,7 +1816,7 @@ bool MovementAction::MoveInside(uint32 mapId, float x, float y, float z, float d
     {
         return false;
     }
-    EmitDebugMove("MoveInside:spline", x, y, z);
+    EmitDebugMove("MoveInside", "mmap", x, y, z);
     return MoveNear(mapId, x, y, z, distance, priority);
 }
 
@@ -2418,7 +2405,7 @@ bool MovementAction::FleePosition(Position pos, float radius, uint32 minInterval
     }
     if (bestPos != Position())
     {
-        EmitDebugMove("FleePosition:spline", bestPos.GetPositionX(), bestPos.GetPositionY(), bestPos.GetPositionZ());
+        EmitDebugMove("FleePosition", "mmap", bestPos.GetPositionX(), bestPos.GetPositionY(), bestPos.GetPositionZ());
         if (MoveTo(bot->GetMapId(), bestPos.GetPositionX(), bestPos.GetPositionY(), bestPos.GetPositionZ(), false,
                    false, true, false, MovementPriority::MOVEMENT_COMBAT))
         {
@@ -3315,7 +3302,7 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
         lastMove.setPath(TravelPath(wpts));
     }
 
-    EmitDebugMove("TravelPlan:walk", last.x, last.y, last.z);
+    EmitDebugMove("TravelPlan:walk-start", "mmap", last.x, last.y, last.z);
 
     return false;  // Walking
 }
@@ -3325,7 +3312,7 @@ bool MovementAction::MoveToSpline(TravelPlan& state, WorldPosition target)
     if (!IsMovingAllowed())
         return false;
 
-    EmitDebugMove("TravelPlan:segment", target.GetPositionX(), target.GetPositionY(), target.GetPositionZ());
+    EmitDebugMove("TravelPlan:walk-waypoint", "mmap", target.GetPositionX(), target.GetPositionY(), target.GetPositionZ());
 
     // Generate path
     state.walkPoints.clear();
@@ -3763,7 +3750,7 @@ bool MovementAction::BoardTransport(Transport* transport)
     {
         transport->AddPassenger(bot, true);
         bot->StopMovingOnCurrentPos();
-        EmitDebugMove("TravelPlan:transport-board", transport->GetPositionX(),
+        EmitDebugMove("TravelPlan:transport-board", "teleport", transport->GetPositionX(),
                       transport->GetPositionY(), transport->GetPositionZ());
         return true;
     }
@@ -3789,7 +3776,7 @@ bool MovementAction::BoardTransport(Transport* transport)
             bot->SetStandState(UNIT_STAND_STATE_STAND);
 
         mm->MovePoint(0, destX, destY, destZ, FORCED_MOVEMENT_NONE, 0.0f, 0.0f, false, false);
-        EmitDebugMove("TravelPlan:transport-walk", destX, destY, destZ);
+        EmitDebugMove("TravelPlan:transport-walk", "spline", destX, destY, destZ);
     }
 
     return false;
