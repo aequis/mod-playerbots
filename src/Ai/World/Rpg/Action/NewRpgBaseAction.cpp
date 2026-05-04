@@ -49,38 +49,6 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     if (dest == WorldPosition())
         return false;
 
-    // Off-mmap recovery. Probe a 1y-offset destination to detect if
-    // the bot's current position has a valid mmap polygon.
-    // PATHFIND_FARFROMPOLY_START in the result type means start is
-    // off-mesh (fell through floor, knocked off map, glitched inside
-    // terrain). Without this, the chained probe returns NOPATH and
-    // the motion master falls back to a straight 3D spline =
-    // diagonal through air. Snap Z to nearest valid ground via vmap
-    // raycast and NearTeleport so the next MoveFarTo runs from a
-    // sane position.
-    {
-        PathGenerator probeGen(bot);
-        probeGen.CalculatePath(bot->GetPositionX() + 1.0f, bot->GetPositionY(),
-            bot->GetPositionZ(), false);
-        if (probeGen.GetPathType() & PATHFIND_FARFROMPOLY_START)
-        {
-            float groundZ = bot->GetMap()->GetHeight(bot->GetPhaseMask(),
-                bot->GetPositionX(), bot->GetPositionY(), MAX_HEIGHT, true);
-            if (groundZ > INVALID_HEIGHT && std::fabs(groundZ - bot->GetPositionZ()) > 1.0f)
-            {
-                LOG_INFO("playerbots",
-                    "[MoveFar] {} OFF-MMAP recovery: snapping ({:.0f},{:.0f},{:.0f}) -> z={:.0f}",
-                    bot->GetName(), bot->GetPositionX(), bot->GetPositionY(),
-                    bot->GetPositionZ(), groundZ);
-                bot->NearTeleportTo(bot->GetPositionX(), bot->GetPositionY(), groundZ,
-                    bot->GetOrientation());
-            }
-            // Skip this tick — re-enter next tick from the snapped
-            // position so the chained probe has a valid start poly.
-            return false;
-        }
-    }
-
     // performance optimization
     if (IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
     {
