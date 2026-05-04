@@ -322,17 +322,22 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     }
 
     // Empty / non-progressing path falls back to dispatching the
-    // destination as a single waypoint. Best-effort spline;
-    // UnstuckAction (5/10 min) is the eventual catch if this loops
-    // forever.
-    LOG_INFO("playerbots", "[MoveFar] {} spline | dis={:.0f} | probe.empty={} | mmapFails={} nodeFails={} | flags={}{}{}",
+    // destination as a single waypoint. Spline only when target is
+    // line-of-sight: dispatching a straight line through walls
+    // produces visible clipping/glitching. If LOS is blocked we
+    // refuse and let UnstuckAction (5/10 min) catch the stuck.
+    bool const inLOS = bot->IsWithinLOS(dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
+    LOG_INFO("playerbots", "[MoveFar] {} spline | dis={:.0f} | probe.empty={} | LOS={} | mmapFails={} nodeFails={} | flags={}{}{}",
         bot->GetName(), dis,
         probe.empty() ? "y" : "n",
+        inLOS ? "y" : "n",
         botAI->rpgInfo.CountRecentAttempts(dest, false),
         botAI->rpgInfo.CountRecentAttempts(dest, true),
         forceMmapOverNodes ? "F-mmap " : "",
         forceNodesOverMmap ? "F-nodes " : "",
         bothExhausted ? "EXHAUST " : "");
+    if (!inLOS)
+        return false;  // Refuse to dispatch a straight line through geometry.
     {
         char fails[32];
         snprintf(fails, sizeof(fails), "mF=%d nF=%d",
