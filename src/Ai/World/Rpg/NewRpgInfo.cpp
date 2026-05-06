@@ -78,12 +78,25 @@ void NewRpgInfo::Reset()
     data = Idle{};
     startT = getMSTime();
     ClearTravel();
-    recentMoveFarAttempts.clear();
+    // recentMoveFarAttempts is intentionally NOT cleared. Reset() runs
+    // on every state change (ChangeToDoQuest, ChangeToIdle, etc.) and
+    // the do-quest action oscillates through transitions during a
+    // failure cycle — wiping the deque here would prevent the
+    // MoveFarTo loop-breaker (nF >= 3 AND mF >= 3 → bothExhausted)
+    // from converging. CountRecentAttempts already filters by
+    // destination (within 10y), so stale entries for previous quests
+    // don't affect new ones.
 }
 
 void NewRpgInfo::RecordMoveFarAttempt(WorldPosition const& dest, bool wasNodeTravel)
 {
-    if (recentMoveFarAttempts.size() >= 3)
+    // Cap at 6 (3 node + 3 mmap). The loop-breaker in MoveFarTo
+    // requires nF >= 3 AND mF >= 3 to declare bothExhausted. Each
+    // MoveFarTo failure cycle records BOTH a node attempt and a mmap
+    // attempt, so a single 3-cap deque would pop the older type
+    // before its count reached 3, structurally preventing
+    // bothExhausted from triggering.
+    if (recentMoveFarAttempts.size() >= 6)
         recentMoveFarAttempts.pop_front();
     MoveFarAttempt a;
     a.dest = dest;

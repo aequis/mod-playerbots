@@ -3232,39 +3232,6 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
     for (auto& pt : state.walkPoints)
         bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
 
-    // Drop waypoints whose segment from the previous point crosses
-    // solid geometry. Z-snapping each point to ground is necessary
-    // but not sufficient — two ground-level waypoints A and B with a
-    // mountain between them produce a spline that linearly
-    // interpolates straight through the mountain. vmap LoS check on
-    // each segment catches that. We only drop the offending B
-    // (skipping it) — if A→C is also blocked, the loop drops C too,
-    // until either the path becomes contiguous or empties out.
-    if (Map* losMap = bot->GetMap())
-    {
-        uint32 const phaseMask = bot->GetPhaseMask();
-        for (size_t i = 1; i < state.walkPoints.size(); /* incremented in body */)
-        {
-            G3D::Vector3 const& a = state.walkPoints[i - 1];
-            G3D::Vector3 const& b = state.walkPoints[i];
-            // +2y on Z so the raycast starts/ends near the bot's
-            // chest level rather than ground (avoids false positives
-            // from sub-floor poly).
-            if (!losMap->isInLineOfSight(a.x, a.y, a.z + 2.0f, b.x, b.y, b.z + 2.0f,
-                    phaseMask, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing))
-            {
-                state.walkPoints.erase(state.walkPoints.begin() + i);
-                continue;
-            }
-            ++i;
-        }
-        if (state.walkPoints.size() < 2)
-        {
-            state.walkPoints.clear();
-            return true;
-        }
-    }
-
     // Mount up
     if (!bot->IsMounted() && !bot->IsInCombat() && bot->IsOutdoors() && bot->IsAlive())
         botAI->DoSpecificAction("check mount state", Event(), true);

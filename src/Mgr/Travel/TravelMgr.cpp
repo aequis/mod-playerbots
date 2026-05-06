@@ -739,7 +739,14 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     if (tempCreature)
         delete tempCreature;
 
-    if (type == PATHFIND_INCOMPLETE || type == PATHFIND_NORMAL)
+    // PathType is a bitmask (PathGenerator.h). Detour can return e.g.
+    // PATHFIND_INCOMPLETE | PATHFIND_FARFROMPOLY_END (0x84) when the
+    // destination is a few yards off the nearest polygon — a strict
+    // `== PATHFIND_INCOMPLETE` check would reject the perfectly usable
+    // partial path and the chained probe would terminate empty on the
+    // very first call. PathGenerator's own internal code uses bitwise
+    // tests like `!(_type & PATHFIND_INCOMPLETE)`.
+    if (type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE))
         return fromPointsArray(points);
 
     return {};
