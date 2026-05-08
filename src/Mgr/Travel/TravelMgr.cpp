@@ -739,14 +739,23 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     if (tempCreature)
         delete tempCreature;
 
-    // PathType is a bitmask (PathGenerator.h). Detour can return e.g.
-    // PATHFIND_INCOMPLETE | PATHFIND_FARFROMPOLY_END (0x84) when the
-    // destination is a few yards off the nearest polygon — a strict
-    // `== PATHFIND_INCOMPLETE` check would reject the perfectly usable
-    // partial path and the chained probe would terminate empty on the
-    // very first call. PathGenerator's own internal code uses bitwise
-    // tests like `!(_type & PATHFIND_INCOMPLETE)`.
-    if (type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE))
+    // PathType is a bitmask. Two things to handle:
+    //
+    // 1. AC's PathGenerator can return INCOMPLETE | FARFROMPOLY_END
+    //    (0x84) etc. — strict `== PATHFIND_INCOMPLETE` would reject
+    //    these perfectly usable partial paths. Use bitwise to accept
+    //    NORMAL/INCOMPLETE plus auxiliary flags.
+    //
+    // 2. AC's PathGenerator at PathGenerator.cpp:177-188 returns
+    //    NORMAL | NOT_USING_PATH for player units when start or end
+    //    polygon is INVALID_POLYREF (BuildShortcut → 2-point straight
+    //    line through whatever's in the way). cmangos by contrast
+    //    returns NOPATH for the same case (PathFinder.cpp:437-441).
+    //    To match cmangos's intent (never silently dispatch a
+    //    geometry-ignoring shortcut), reject any path with the
+    //    NOT_USING_PATH bit set.
+    if ((type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE))
+        && !(type & PATHFIND_NOT_USING_PATH))
         return fromPointsArray(points);
 
     return {};
