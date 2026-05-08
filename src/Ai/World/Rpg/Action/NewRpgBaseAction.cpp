@@ -204,6 +204,62 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     WorldPosition botPos(bot);
     std::vector<WorldPosition> probe = botPos.getPathTo(dest, bot);
 
+    // Regression guard (cmangos ResolveMovePath parity): if a cached
+    // lastPath ends at least as close to dest as the new probe's
+    // endpoint, prefer the cached path. The 10% reuse block above
+    // already returned early when cached was within 10% of dest;
+    // this catches "cached is far (>10%) but still better than the
+    // probe" — typically when the probe got blocked by geometry and
+    // ended much farther from dest than where cached had reached.
+    {
+        LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+        if (!lastMove.lastPath.empty() && !probe.empty() && probe.size() >= 2)
+        {
+            WorldPosition lastBack = lastMove.lastPath.getBack();
+            if (lastBack.GetMapId() == dest.GetMapId())
+            {
+                float cachedToDest = lastBack.distance(dest);
+                float probeToDest = dest.GetExactDist(probe.back().GetPositionX(),
+                                                      probe.back().GetPositionY(),
+                                                      probe.back().GetPositionZ());
+                if (cachedToDest <= probeToDest)
+                {
+                    WorldPosition botPosNow(bot);
+                    lastMove.lastPath.makeShortCut(botPosNow, sPlayerbotAIConfig.reactDistance, bot);
+                    if (!lastMove.lastPath.empty())
+                    {
+                        std::vector<WorldPosition> const& pts = lastMove.lastPath.getPointPath();
+                        if (pts.size() >= 2)
+                        {
+                            Movement::PointsArray points;
+                            points.reserve(pts.size());
+                            for (auto const& wp : pts)
+                                points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
+                            for (auto& pt : points)
+                                bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
+                            bot->GetMotionMaster()->Clear();
+                            bot->GetMotionMaster()->MoveSplinePath(&points, FORCED_MOVEMENT_RUN);
+
+                            G3D::Vector3 const& last = points.back();
+                            float totalChainDist = 0.f;
+                            for (size_t i = 1; i < points.size(); ++i)
+                                totalChainDist += (points[i] - points[i - 1]).length();
+                            float speed = std::max(bot->GetSpeed(MOVE_RUN), 0.1f);
+                            uint32 expectedMs = static_cast<uint32>((totalChainDist / speed) * IN_MILLISECONDS);
+                            uint32 cappedMs = std::min(expectedMs, (uint32)sPlayerbotAIConfig.maxWaitForMove);
+                            lastMove.Set(bot->GetMapId(), last.x, last.y, last.z,
+                                bot->GetOrientation(), cappedMs, MovementPriority::MOVEMENT_NORMAL);
+
+                            EmitDebugMove("MoveFar", "regress-keep",
+                                          dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Walk the chained probe's full waypoint chain via MoveSplinePath.
     // Handing the full waypoint vector to the motion master removes
     // its discretion to introduce a straight-line shortcut between
