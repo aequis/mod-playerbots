@@ -79,7 +79,11 @@ bool OpenLootAction::Execute(Event /*event*/)
     bool result = DoLoot(lootObject);
     if (result)
     {
-        AI_VALUE(LootObjectStack*, "available loot")->Remove(lootObject.guid);
+        // MarkCompleted (not Remove) — "add all loot" reads
+        // "nearest corpses" without a lootable filter, so a plain
+        // Remove lets the same corpse re-enter the stack on the next
+        // tick. The completed set blocks re-add for ~5 min.
+        AI_VALUE(LootObjectStack*, "available loot")->MarkCompleted(lootObject.guid);
         context->GetValue<LootObject>("loot target")->Set(LootObject());
     }
     return result;
@@ -514,7 +518,7 @@ bool StoreLootAction::Execute(Event event)
         BroadcastHelper::BroadcastLootingItem(botAI, bot, proto);
     }
 
-    AI_VALUE(LootObjectStack*, "available loot")->Remove(guid);
+    AI_VALUE(LootObjectStack*, "available loot")->MarkCompleted(guid);
 
     // release loot
     WorldPacket* packet = new WorldPacket(CMSG_LOOT_RELEASE, 8);

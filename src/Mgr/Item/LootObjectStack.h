@@ -76,6 +76,7 @@ public:
 
     bool Add(ObjectGuid guid);
     void Remove(ObjectGuid guid);
+    void MarkCompleted(ObjectGuid guid);
     void Clear();
     bool CanLoot(float maxDistance);
     LootObject GetLoot(float maxDistance = 0);
@@ -85,6 +86,9 @@ private:
 
     Player* bot;
     LootTargetList availableLoot;
+    // Guids we already opened loot on; blocks "add all loot" from
+    // re-adding the same corpse before it despawns.
+    LootTargetList completedLoot;
 };
 
 #endif
