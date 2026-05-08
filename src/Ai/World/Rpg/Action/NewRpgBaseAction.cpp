@@ -73,7 +73,16 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         if (bot->isMoving() && lastMove.lastMoveToMapId == bot->GetMapId())
         {
             float remaining = bot->GetExactDist(lastMove.lastMoveToX, lastMove.lastMoveToY, lastMove.lastMoveToZ);
-            if (remaining > 10.0f)
+            // Only ride the existing spline if the cached endpoint is
+            // still close to the requested dest. A dest shift > 40y is
+            // a target change (objective POI -> turn-in NPC, new POI
+            // selection, …) and needs a fresh travelplan/mmap probe;
+            // otherwise the bot rides a stale spline straight through
+            // geometry.
+            float endpointToDest = dest.distance(WorldPosition(
+                lastMove.lastMoveToMapId, lastMove.lastMoveToX,
+                lastMove.lastMoveToY, lastMove.lastMoveToZ));
+            if (remaining > 10.0f && endpointToDest <= 40.0f)
             {
                 EmitDebugMove("MoveFar", "spline-plan",
                               lastMove.lastMoveToX, lastMove.lastMoveToY, lastMove.lastMoveToZ);
