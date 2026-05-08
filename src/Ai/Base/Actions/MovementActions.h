@@ -88,7 +88,7 @@ protected:
     bool FleePosition(Position pos, float radius, uint32 minInterval = 1000);
     bool CheckLastFlee(float curAngle, std::list<FleeInfo>& infoList);
 
-    PathResult GeneratePath(float x, float y, float z, uint32 acceptMask = DEFAULT_PATH_ACCEPT_MASK, bool forceDestination = true);
+    PathResult GeneratePath(float x, float y, float z, uint32 acceptMask = DEFAULT_PATH_ACCEPT_MASK, bool forceDestination = false);
 
     bool GetTravelPlan(TravelPlan& plan, WorldPosition destination);
     bool ExecuteTravelPlan(TravelPlan& state);
