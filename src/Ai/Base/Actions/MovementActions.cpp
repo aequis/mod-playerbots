@@ -385,32 +385,29 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
     }
     else
     {
-        float modifiedZ;
-        Movement::PointsArray path =
-            SearchForBestPath(x, y, z, modifiedZ, sPlayerbotAIConfig.maxMovementSearchTime, normal_only);
-        if (modifiedZ == INVALID_HEIGHT)
-            return false;
-        float distance = bot->GetExactDist(x, y, modifiedZ);
+        // Direct dispatch — engine MovePoint(generatePath=true) handles
+        // path-finding internally. Previously called SearchForBestPath
+        // here to probe ±step around the target z; that helped find
+        // polygons when the input z was several yards off the navmesh,
+        // but its "shortest path" preference would shift modifiedZ to
+        // an unreachable nearby polygon (upper terrace, ledge above)
+        // and then the engine's straight-spline NOPATH fallback would
+        // air-walk the bot up to it. cmangos doesn't have an
+        // equivalent — single-z PathFinder call is sufficient.
+        float distance = bot->GetExactDist(x, y, z);
         if (distance > 0.01f)
         {
             if (bot->IsSitState())
                 bot->SetStandState(UNIT_STAND_STATE_STAND);
 
-            // if (bot->IsNonMeleeSpellCast(true))
-            // {
-            //     bot->CastStop();
-            //     botAI->InterruptSpell();
-            // }
-            DoMovePoint(bot, x, y, modifiedZ, generatePath, backwards);
+            DoMovePoint(bot, x, y, z, generatePath, backwards);
             float delay = 1000.0f * MoveDelay(distance, backwards);
             if (lessDelay)
-            {
                 delay -= botAI->GetReactDelay();
-            }
             delay = std::max(.0f, delay);
             delay = std::min((float)sPlayerbotAIConfig.maxWaitForMove, delay);
             AI_VALUE(LastMovement&, "last movement")
-                .Set(mapId, x, y, modifiedZ, bot->GetOrientation(), delay, priority);
+                .Set(mapId, x, y, z, bot->GetOrientation(), delay, priority);
             return true;
         }
     }
