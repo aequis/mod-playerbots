@@ -730,14 +730,6 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     // the previous step's endpoint, giving the 40-attempt walker
     // its intended multi-tile reach.
     PathGenerator path(pathUnit);
-    // Stricter walkability validation than navmesh extract alone: per-
-    // segment runtime check against the unit's collision-height climb
-    // formula. Detour may return paths up steep slopes that the
-    // walkable-slope-angle filter at extract time accepted but that the
-    // unit physically can't walk; SetSlopeCheck rejects those at
-    // pathfind time (returns DT_SLOPE_TOO_STEEP / shorter path).
-    // Engine uses this in FleeingMovementGenerator only.
-    path.SetSlopeCheck(true);
     path.CalculatePath(startPos.GetPositionX(), startPos.GetPositionY(), startPos.GetPositionZ(),
                        GetPositionX(), GetPositionY(), GetPositionZ(), false);
 
