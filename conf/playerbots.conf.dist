@@ -344,10 +344,6 @@ AiPlayerbot.MaxWaitForMove = 5000
 #          2 - MoveSplinePath disabled everywhere
 AiPlayerbot.DisableMoveSplinePath = 0
 
-# Max search time for movement (higher for better movement on slopes)
-# Default: 3
-AiPlayerbot.MaxMovementSearchTime = 3
-
 # Action expiration time
 AiPlayerbot.ExpireActionTime = 5000
 
