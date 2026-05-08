@@ -74,7 +74,11 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         {
             float remaining = bot->GetExactDist(lastMove.lastMoveToX, lastMove.lastMoveToY, lastMove.lastMoveToZ);
             if (remaining > 10.0f)
+            {
+                EmitDebugMove("MoveFar", "spline-active",
+                              lastMove.lastMoveToX, lastMove.lastMoveToY, lastMove.lastMoveToZ);
                 return true;
+            }
         }
     }
 
@@ -102,6 +106,11 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
                     // makeShortCut may clear the path if the bot drifted
                     // too far off (>reactDistance from any waypoint). In
                     // that case fall through to fresh planning.
+                    if (lastMove.lastPath.empty())
+                    {
+                        EmitDebugMove("MoveFar", "reuse-trim-failed",
+                                      dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
+                    }
                     if (!lastMove.lastPath.empty())
                     {
                         std::vector<WorldPosition> const& pts = lastMove.lastPath.getPointPath();
@@ -387,6 +396,7 @@ bool NewRpgBaseAction::MoveRandomNear(float moveStep, MovementPriority priority,
         }
     }
 
+    EmitDebugMove("MoveRandomNear", "all-fail", x, y, z);
     return false;
 }
 
