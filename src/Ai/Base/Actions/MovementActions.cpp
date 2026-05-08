@@ -3232,6 +3232,29 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
     for (auto& pt : state.walkPoints)
         bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
 
+    // Cap dispatched path length at ~100y. The active spline runs
+    // until the bot is within ~10y of its endpoint, then MoveFarTo /
+    // ExecuteTravelPlan replans from the new position. Capping per-
+    // dispatch distance gives the planner regular re-evaluation
+    // points (terrain shifts, combat, position drift) instead of
+    // committing the whole batch upfront.
+    {
+        constexpr float maxDispatchLength = 100.0f;
+        float accumulated = 0.f;
+        size_t cutoff = state.walkPoints.size();
+        for (size_t i = 1; i < state.walkPoints.size(); ++i)
+        {
+            accumulated += (state.walkPoints[i] - state.walkPoints[i - 1]).length();
+            if (accumulated >= maxDispatchLength)
+            {
+                cutoff = i + 1;
+                break;
+            }
+        }
+        if (cutoff < state.walkPoints.size())
+            state.walkPoints.resize(cutoff);
+    }
+
     // Mount up
     if (!bot->IsMounted() && !bot->IsInCombat() && bot->IsOutdoors() && bot->IsAlive())
         botAI->DoSpecificAction("check mount state", Event(), true);

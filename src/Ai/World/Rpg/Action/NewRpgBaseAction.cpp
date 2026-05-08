@@ -237,13 +237,29 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
 
             if (points.size() >= 2)
             {
-                // Cap the chain at 20 waypoints. Beyond that, the
-                // chained probe's accuracy degrades (more chained
-                // PathGenerator calls = more stitching artifacts) and
-                // the spline interpolation between distant waypoints
-                // is more likely to drift through air.
-                if (points.size() > 20)
-                    points.resize(20);
+                // Cap dispatched path length at ~100y. MoveFarTo's
+                // early-exit (top of function) lets the active spline
+                // run until bot is within 10y of its endpoint, then
+                // replans from the new position. Capping per-dispatch
+                // distance gives the planner regular re-evaluation
+                // points without the per-tick replan cost of fully
+                // unbounded chunks.
+                {
+                    constexpr float maxDispatchLength = 100.0f;
+                    float accumulated = 0.f;
+                    size_t cutoff = points.size();
+                    for (size_t i = 1; i < points.size(); ++i)
+                    {
+                        accumulated += (points[i] - points[i - 1]).length();
+                        if (accumulated >= maxDispatchLength)
+                        {
+                            cutoff = i + 1;
+                            break;
+                        }
+                    }
+                    if (cutoff < points.size())
+                        points.resize(cutoff);
+                }
 
                 LOG_INFO("playerbots", "[MoveFar] {} mmap-path | dis={:.0f} | endDist={:.0f} | wp={} | mmapFails={} nodeFails={} | flags={}{}{}",
                     bot->GetName(), dis, endDistToDest, (uint32)points.size(),
