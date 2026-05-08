@@ -3334,33 +3334,18 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
         case PathNodeType::NODE_NODE:
         {
             // Batch consecutive walk points into one spline. Capped at
-            // 20 points OR ~70y of accumulated distance — whichever
-            // comes first. The distance cap gives the planner regular
-            // re-evaluation points without committing the whole
-            // remaining route up front; stepIdx advances exactly in
-            // step with what's actually dispatched, so the next tick
-            // picks up from the truncation point.
+            // 20 points per dispatch as a cheap upper bound on per-tick
+            // work; stepIdx advances exactly in step with what's
+            // dispatched, so the next tick picks up from the cutoff.
             static constexpr uint32 MAX_SPLINE_POINTS = 20;
-            static constexpr float MAX_BATCH_LENGTH = 70.0f;
             state.walkPoints.clear();
-            float accumulated = 0.f;
             while (state.stepIdx < state.steps.size() && state.walkPoints.size() < MAX_SPLINE_POINTS)
             {
                 const PathNodePoint& wp = state.steps[state.stepIdx];
                 if (wp.type != PathNodeType::NODE_PATH && wp.type != PathNodeType::NODE_NODE)
                     break;
-                G3D::Vector3 next(wp.point.GetPositionX(), wp.point.GetPositionY(), wp.point.GetPositionZ());
-                if (!state.walkPoints.empty())
-                {
-                    accumulated += (next - state.walkPoints.back()).length();
-                    if (accumulated >= MAX_BATCH_LENGTH)
-                    {
-                        state.walkPoints.push_back(next);
-                        state.stepIdx++;
-                        break;
-                    }
-                }
-                state.walkPoints.push_back(next);
+                state.walkPoints.push_back(G3D::Vector3(wp.point.GetPositionX(),
+                    wp.point.GetPositionY(), wp.point.GetPositionZ()));
                 state.stepIdx++;
             }
 

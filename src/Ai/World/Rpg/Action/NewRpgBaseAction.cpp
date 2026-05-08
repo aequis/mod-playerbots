@@ -78,17 +78,12 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         }
     }
 
-    // 10% lastPath reuse — route commitment across combat
-    // interruptions. If the cached path's endpoint is still close
-    // (within 10%) to the new dest AND bot is mid-flight toward it
-    // (>10y away AND currently moving), reuse silently. The
-    // bot->isMoving() guard prevents reuse from short-circuiting
-    // when bot is stopped between dispatches — in that case we
-    // MUST fall through to dispatch the next leg, not return true
-    // and stand still.
+    // 10% lastPath reuse — if the cached path's endpoint is still
+    // close (within 10%) to the new dest AND we're not nearly there,
+    // keep the existing route. Matches cmangos ResolveMovePath.
     {
         LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
-        if (bot->isMoving() && !lastMove.lastPath.empty())
+        if (!lastMove.lastPath.empty())
         {
             WorldPosition lastBack = lastMove.lastPath.getBack();
             if (lastBack.GetMapId() == dest.GetMapId())
@@ -177,30 +172,6 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
 
             if (points.size() >= 2)
             {
-                // Cap dispatched path length at ~70y. MoveFarTo's
-                // early-exit (top of function) lets the active spline
-                // run until bot is within 10y of its endpoint, then
-                // replans from the new position. Capping per-dispatch
-                // distance gives the planner regular re-evaluation
-                // points without the per-tick replan cost of fully
-                // unbounded chunks.
-                {
-                    constexpr float maxDispatchLength = 70.0f;
-                    float accumulated = 0.f;
-                    size_t cutoff = points.size();
-                    for (size_t i = 1; i < points.size(); ++i)
-                    {
-                        accumulated += (points[i] - points[i - 1]).length();
-                        if (accumulated >= maxDispatchLength)
-                        {
-                            cutoff = i + 1;
-                            break;
-                        }
-                    }
-                    if (cutoff < points.size())
-                        points.resize(cutoff);
-                }
-
                 LOG_INFO("playerbots", "[MoveFar] {} mmap-path | dis={:.0f} | endDist={:.0f} | wp={}",
                     bot->GetName(), dis, endDistToDest, (uint32)points.size());
                 EmitDebugMove("MoveFar", "mmap",
