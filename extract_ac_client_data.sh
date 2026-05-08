@@ -69,7 +69,7 @@ mmapsConfig:
     # 6 cells × 0.2667 yd ≈ 1.60 yd — matches WoW player capsule height at
     # 2000 resolution (AC stock). Preserves the 1.60 yd world-unit
     # ceiling-clearance requirement.
-    walkableHeight: 6
+    walkableHeight: 8
 
     # Maximum height difference (in cell units) NPCs can step up or down.
     # Higher values allow walking over fences, ledges, or steps.
