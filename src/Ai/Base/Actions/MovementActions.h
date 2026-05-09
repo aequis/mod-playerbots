@@ -106,6 +106,12 @@ private:
     bool LaunchWalkSpline(TravelPlan& state);
     bool CheckSplineProgress(TravelPlan& state);
     bool MoveToSpline(TravelPlan& state, WorldPosition target);
+    // Per-segment mmap refinement of a travel-node-graph walk batch.
+    // The graph stores offline-baked coords whose straight-line
+    // interpolation may pass through geometry the bot can't actually
+    // traverse. Returns false if any segment is unwalkable per the
+    // live navmesh, in which case the caller should abort the plan.
+    bool RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints);
 
 protected:
     struct CheckAngle

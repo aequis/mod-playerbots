@@ -3203,6 +3203,54 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
     return false;  // Walking
 }
 
+bool MovementAction::RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints)
+{
+    if (walkPoints.size() < 2)
+        return true;
+
+    std::vector<G3D::Vector3> refined;
+    refined.reserve(walkPoints.size() * 4);
+
+    uint32 const mapId = bot->GetMapId();
+
+    for (size_t i = 0; i + 1 < walkPoints.size(); ++i)
+    {
+        G3D::Vector3 const& a = walkPoints[i];
+        G3D::Vector3 const& b = walkPoints[i + 1];
+
+        WorldPosition aPos(mapId, a.x, a.y, a.z);
+        WorldPosition bPos(mapId, b.x, b.y, b.z);
+
+        // Per-segment mmap query against the live navmesh. The
+        // travel-node graph stores offline-baked waypoints; if the
+        // straight line A->B crosses geometry the live navmesh has
+        // (mountain, ledge, model edit since offline gen), this
+        // returns either an mmap-routed path around it (NORMAL/
+        // INCOMPLETE) or empty (NOT_USING_PATH was rejected as
+        // "would walk through walls").
+        std::vector<WorldPosition> segPath = bPos.getPathStepFrom(aPos, bot);
+
+        if (segPath.empty())
+        {
+            // Live mmap refuses A->B. Caller should abort the plan
+            // and let MoveFarTo's own probe re-derive a route.
+            return false;
+        }
+
+        // First segment: include its start point so the spline
+        // begins from the original A. Later segments: skip the first
+        // point — it duplicates the previous segment's tail.
+        size_t startK = (i == 0) ? 0 : 1;
+        for (size_t k = startK; k < segPath.size(); ++k)
+            refined.emplace_back(segPath[k].GetPositionX(),
+                                 segPath[k].GetPositionY(),
+                                 segPath[k].GetPositionZ());
+    }
+
+    walkPoints = std::move(refined);
+    return true;
+}
+
 bool MovementAction::MoveToSpline(TravelPlan& state, WorldPosition target)
 {
     if (!IsMovingAllowed())
@@ -3383,6 +3431,27 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
                 state.walkPoints.clear();
                 return true;
             }
+
+            // Re-validate each consecutive (A, B) pair against the
+            // live navmesh. The graph's offline-baked coords can
+            // produce a chain whose straight-line interpolation
+            // passes through geometry (mountains, ledges, model
+            // edits). RefineWalkPoints substitutes mmap-routed
+            // sub-paths between each pair; if any segment is
+            // unwalkable, abort the plan so MoveFarTo's own probe
+            // can re-derive a route.
+            if (!RefineWalkPoints(state.walkPoints))
+            {
+                G3D::Vector3 const& failPt = state.walkPoints.empty()
+                    ? G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ())
+                    : state.walkPoints.front();
+                EmitDebugMove("TravelPlan", "segment-unwalkable",
+                              failPt.x, failPt.y, failPt.z);
+                state.walkPoints.clear();
+                state.Reset();
+                return false;
+            }
+
             LaunchWalkSpline(state);
             return true;
         }
