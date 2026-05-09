@@ -730,6 +730,7 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     // the previous step's endpoint, giving the 40-attempt walker
     // its intended multi-tile reach.
     PathGenerator path(pathUnit);
+    path.AddExcludeFlag(NAV_GROUND_STEEP);
     path.CalculatePath(startPos.GetPositionX(), startPos.GetPositionY(), startPos.GetPositionZ(),
                        GetPositionX(), GetPositionY(), GetPositionZ(), false);
 
