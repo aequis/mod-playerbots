@@ -226,6 +226,14 @@ TravelNodePath* TravelNode::BuildPath(TravelNode* endNode, Unit* bot, bool postP
 
     bool canPath = endPos->isPathTo(path);  // Check if we reached our destination.
 
+    // Reject "pathfinder cheating" — too-short or too-steep results
+    // that mmap accepts but a player can't actually walk. Without this,
+    // the segment gets cached + saved to playerbots_travelnode_path
+    // and dispatched at runtime as straight-line spline through whatever
+    // mountain/cliff sat between A and B (cmangos parity).
+    if (canPath && TravelPath::IsPathCheating(path, getPosition()->distance(endNode->getPosition())))
+        canPath = false;
+
     if (!canPath && endNode->hasLinkTo(this))  // Unable to find a path? See if the reverse is possible.
     {
         TravelNodePath backNodePath = *endNode->getPathTo(this);
@@ -678,6 +686,39 @@ void TravelNode::print([[maybe_unused]] bool printFailed)
 }
 
 // Attempts to move ahead of the path.
+bool TravelPath::IsPathCheating(std::vector<WorldPosition> const& path, float endpointDistance)
+{
+    if (path.empty())
+        return false;
+
+    // Guard 1: 2-point path for >5y is navmesh "gave up" — straight
+    // line through whatever's between A and B.
+    if (path.size() == 2 && endpointDistance > 5.0f)
+        return true;
+
+    // Guard 2: steep slope at start or end suggests the pathfinder
+    // hopped through a near-vertical step. >10y drop with >2:1 slope
+    // is too steep to walk.
+    if (path.size() > 2)
+    {
+        WorldPosition const& a = path.front();
+        WorldPosition const& b = path[1];
+        float vDist = std::fabs(a.GetPositionZ() - b.GetPositionZ());
+        float hDist = a.GetExactDist2d(b.GetPositionX(), b.GetPositionY());
+        if (vDist > 10.0f && (hDist == 0.0f || vDist / hDist > 2.0f))
+            return true;
+
+        WorldPosition const& c = path.back();
+        WorldPosition const& d = path[path.size() - 2];
+        float vDist2 = std::fabs(c.GetPositionZ() - d.GetPositionZ());
+        float hDist2 = c.GetExactDist2d(d.GetPositionX(), d.GetPositionY());
+        if (vDist2 > 10.0f && (hDist2 == 0.0f || vDist2 / hDist2 > 2.0f))
+            return true;
+    }
+
+    return false;
+}
+
 bool TravelPath::makeShortCut(WorldPosition startPos, float maxDist, Unit* bot)
 {
     if (GetPath().empty())

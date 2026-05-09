@@ -3237,6 +3237,15 @@ bool MovementAction::RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints)
             return false;
         }
 
+        // Reject "pathfinder cheating" — same checks the offline gen
+        // applies to BuildPath. Catches cached segments where the
+        // live navmesh still produces a near-vertical hop or a
+        // 2-point straight line through geometry.
+        if (TravelPath::IsPathCheating(segPath, aPos.distance(bPos)))
+        {
+            return false;
+        }
+
         // First segment: include its start point so the spline
         // begins from the original A. Later segments: skip the first
         // point — it duplicates the previous segment's tail.

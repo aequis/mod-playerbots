@@ -493,6 +493,19 @@ public:
 
     bool makeShortCut(WorldPosition startPos, float maxDist, Unit* bot = nullptr);
 
+    // Detect "pathfinder cheating" — paths that PathGenerator accepts
+    // but a player can't actually walk:
+    //   * a 2-point path for an endpoint distance > 5y means navmesh
+    //     gave up and returned the straight A->B line.
+    //   * a vertical drop > 10y combined with a slope steeper than
+    //     2:1 at either start or end means the pathfinder hopped
+    //     through a near-vertical step the navmesh permits but a
+    //     player wouldn't survive.
+    // cmangos applies the same two checks in TravelNode::buildPath
+    // before caching a node-to-node segment.
+    static bool IsPathCheating(std::vector<WorldPosition> const& path,
+                               float endpointDistance);
+
     std::ostringstream const print();
 
 private:
