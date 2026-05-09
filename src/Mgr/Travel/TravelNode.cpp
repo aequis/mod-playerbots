@@ -1290,18 +1290,14 @@ bool TravelNodeMap::GetFullPath(TravelPlan& plan,
     plan.Reset();
     plan.destination = destination;
 
-    // Removed the "short distance — direct walk" short-circuit that
-    // returned a 2-point plan [botPos, destination] without any
-    // navmesh validation. NODE_PREPATH dispatch then MoveTo'd the
-    // destination as a single straight-line spline, which clipped
-    // through walls/mountains whenever bot and dest sat on opposite
-    // sides of geometry within 296y.
-    //
-    // Falling through to the graph build here means: if a graph
-    // route exists, use it (now validated by IsPathCheating in
-    // BuildPath + RefineWalkPoints at runtime); otherwise return
-    // false so MoveFarTo falls through to its chained mmap probe,
-    // which resolves an mmap-clean waypoint chain.
+    // Short distance — direct walk, no nodes needed
+    if (botPos.fDist(destination) < MAX_PATHFINDING_DISTANCE &&
+        botPos.GetMapId() == destination.GetMapId())
+    {
+        plan.steps.addPoint(botPos, PathNodeType::NODE_PREPATH);
+        plan.steps.addPoint(destination, PathNodeType::NODE_PATH);
+        return true;
+    }
 
     std::shared_lock<std::shared_timed_mutex> guard(m_nMapMtx);
 
