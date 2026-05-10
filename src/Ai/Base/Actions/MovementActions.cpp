@@ -3308,7 +3308,7 @@ bool MovementAction::GetTravelPlan(TravelPlan& plan, WorldPosition destination)
         destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ(),
         destination.GetMapId(), botPos.fDist(destination));
 
-    return sTravelNodeMap.GetFullPath(plan, botPos, bot->GetZoneId(), destination);
+    return sTravelNodeMap.GetFullPath(plan, botPos, bot->GetZoneId(), destination, bot);
 }
 
 bool MovementAction::ExecuteTravelPlan(TravelPlan& state)

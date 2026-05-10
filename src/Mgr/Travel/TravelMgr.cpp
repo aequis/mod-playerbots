@@ -17,6 +17,7 @@
 #include "ChatHelper.h"
 #include "MapCollisionData.h"
 #include "MapMgr.h"
+#include "ModelIgnoreFlags.h"
 #include "PathGenerator.h"
 #include "Playerbots.h"
 #include "RaceMgr.h"
@@ -698,7 +699,6 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
 
     if (!pathUnit)
     {
-        // Create a temporary creature for PathGenerator (same entry as DebugAction "show node")
         Map* map = sMapMgr->FindBaseMap(startPos.GetMapId());
         if (!map)
             return {};
@@ -714,52 +714,82 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
         }
         pathUnit = tempCreature;
 
-        // Ensure grids are created at both endpoints so mmap tiles are available.
-        // EnsureGridCreated loads terrain + vmaps + mmaps but NOT objects,
-        // which is all PathGenerator needs.
         map->EnsureGridCreated(Acore::ComputeGridCoord(startPos.GetPositionX(), startPos.GetPositionY()));
         map->EnsureGridCreated(Acore::ComputeGridCoord(GetPositionX(), GetPositionY()));
     }
 
-    // Explicit-start overload (PathGenerator.h:67). Without this,
-    // CalculatePath(destX,destY,destZ) defaults to the unit's
-    // current position as start — which means every iteration of
-    // getPathFromPath's "chain" begins from the bot's same real
-    // location and produces the same ~296y partial path. The chain
-    // never advances. With explicit start, each step extends from
-    // the previous step's endpoint, giving the 40-attempt walker
-    // its intended multi-tile reach.
     PathGenerator path(pathUnit);
     path.AddExcludeFlag(NAV_GROUND_STEEP);
+    auto result = getPathStepFrom(startPos, path);
+
+    if (tempCreature)
+        delete tempCreature;
+
+    return result;
+}
+
+// Pathfinder-reuse overload — caller owns the PathGenerator and any
+// per-call configuration. Used by getPathFromPath to thread one
+// PathGenerator through the whole 40-step chain instead of
+// constructing a new one per step.
+std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos, PathGenerator& path)
+{
+    // Explicit-start overload. Without this, the chain begins from the
+    // unit's current position every step and never advances.
     path.CalculatePath(startPos.GetPositionX(), startPos.GetPositionY(), startPos.GetPositionZ(),
                        GetPositionX(), GetPositionY(), GetPositionZ(), false);
 
     Movement::PointsArray points = path.GetPath();
     PathType type = path.GetPathType();
 
-    if (tempCreature)
-        delete tempCreature;
+    // PathType is a bitmask. AC's PathGenerator returns
+    // NORMAL | NOT_USING_PATH when start/end poly is INVALID_POLYREF
+    // (BuildShortcut produces a 2-point straight line through whatever's
+    // in the way). Reject those to avoid silently dispatching a
+    // geometry-ignoring shortcut.
+    if (!(type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE)) ||
+        (type & PATHFIND_NOT_USING_PATH))
+        return {};
 
-    // PathType is a bitmask. Two things to handle:
-    //
-    // 1. AC's PathGenerator can return INCOMPLETE | FARFROMPOLY_END
-    //    (0x84) etc. — strict `== PATHFIND_INCOMPLETE` would reject
-    //    these perfectly usable partial paths. Use bitwise to accept
-    //    NORMAL/INCOMPLETE plus auxiliary flags.
-    //
-    // 2. AC's PathGenerator at PathGenerator.cpp:177-188 returns
-    //    NORMAL | NOT_USING_PATH for player units when start or end
-    //    polygon is INVALID_POLYREF (BuildShortcut → 2-point straight
-    //    line through whatever's in the way). cmangos by contrast
-    //    returns NOPATH for the same case (PathFinder.cpp:437-441).
-    //    To match cmangos's intent (never silently dispatch a
-    //    geometry-ignoring shortcut), reject any path with the
-    //    NOT_USING_PATH bit set.
-    if ((type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE))
-        && !(type & PATHFIND_NOT_USING_PATH))
-        return fromPointsArray(points);
+    std::vector<WorldPosition> retvec = fromPointsArray(points);
 
-    return {};
+    // Underwater path-extension. When PATHFIND_INCOMPLETE ends within
+    // 50y of dest and both endpoints are underwater with LOS, extend
+    // by one 5y step (or straight to dest if <5y). Lets bots traverse
+    // navmesh-poor water volumes.
+    if (type & PATHFIND_INCOMPLETE)
+    {
+        WorldPosition end = *this;
+        WorldPosition lastPoint = retvec.back();
+        float dist = lastPoint.distance(&end);
+
+        if (dist < 50.0f && lastPoint.isUnderWater() && end.isUnderWater())
+        {
+            Map* m = end.getMap();
+            bool inLos = m && m->isInLineOfSight(
+                lastPoint.GetPositionX(), lastPoint.GetPositionY(), lastPoint.GetPositionZ() + 1.0f,
+                end.GetPositionX(), end.GetPositionY(), end.GetPositionZ() + 1.0f,
+                PHASEMASK_NORMAL, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing);
+            if (inLos)
+            {
+                if (dist < 5.0f)
+                    retvec.push_back(end);
+                else
+                {
+                    float dx = end.GetPositionX() - lastPoint.GetPositionX();
+                    float dy = end.GetPositionY() - lastPoint.GetPositionY();
+                    float dz = end.GetPositionZ() - lastPoint.GetPositionZ();
+                    float scale = 5.0f / dist;
+                    retvec.emplace_back(end.GetMapId(),
+                                        lastPoint.GetPositionX() + dx * scale,
+                                        lastPoint.GetPositionY() + dy * scale,
+                                        lastPoint.GetPositionZ() + dz * scale);
+                }
+            }
+        }
+    }
+
+    return retvec;
 }
 
 bool WorldPosition::cropPathTo(std::vector<WorldPosition>& path, float maxDistance)
@@ -795,26 +825,59 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
 
     std::vector<WorldPosition> subPath, fullPath = startPath;
 
+    // Construct ONE PathGenerator and thread it through every step
+    // to avoid the per-step alloc cost. AC's BuildPolyPath has a
+    // subpath-prefix optimization that can bend chained probes, so
+    // call Clear() before each step to reset the poly cache.
+    Unit* pathUnit = bot;
+    Creature* tempCreature = nullptr;
+    if (!pathUnit)
+    {
+        Map* map = sMapMgr->FindBaseMap(GetMapId());
+        if (!map)
+            return fullPath;
+
+        tempCreature = new Creature();
+        if (!tempCreature->Create(map->GenerateLowGuid<HighGuid::Unit>(), map,
+                                   PHASEMASK_NORMAL, 1 /*entry*/, 0,
+                                   currentPos.GetPositionX(), currentPos.GetPositionY(),
+                                   currentPos.GetPositionZ(), 0))
+        {
+            delete tempCreature;
+            return fullPath;
+        }
+        pathUnit = tempCreature;
+        map->EnsureGridCreated(Acore::ComputeGridCoord(currentPos.GetPositionX(), currentPos.GetPositionY()));
+        map->EnsureGridCreated(Acore::ComputeGridCoord(GetPositionX(), GetPositionY()));
+    }
+
+    PathGenerator path(pathUnit);
+    path.AddExcludeFlag(NAV_GROUND_STEEP);
+
     // Limit the pathfinding attempts
     for (uint32 i = 0; i < maxAttempt; i++)
     {
-        // Try to pathfind to this position.
-        subPath = getPathStepFrom(currentPos, bot);
+        // Reset cached poly state from the previous step so each call
+        // is a fresh A* (otherwise the prefix-recycling at
+        // PathGenerator.cpp BuildPolyPath snaps the start to the
+        // cached corridor, bending the chain).
+        path.Clear();
 
-        // If we could not find a path return what we have now.
+        subPath = getPathStepFrom(currentPos, path);
+
         if (subPath.empty() || currentPos.distance(&subPath.back()) < sPlayerbotAIConfig.targetPosRecalcDistance)
             break;
 
-        // Append the path excluding the start (this should be the same as the end of the startPath)
         fullPath.insert(fullPath.end(), std::next(subPath.begin(), 1), subPath.end());
 
-        // Are we there yet?
         if (isPathTo(subPath))
             break;
 
-        // Continue pathfinding.
         currentPos = subPath.back();
     }
+
+    if (tempCreature)
+        delete tempCreature;
 
     return fullPath;
 }
