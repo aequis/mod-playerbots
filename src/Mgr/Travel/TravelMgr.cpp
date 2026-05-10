@@ -719,7 +719,6 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     }
 
     PathGenerator path(pathUnit);
-    path.AddExcludeFlag(NAV_GROUND_STEEP);
     auto result = getPathStepFrom(startPos, path);
 
     if (tempCreature)
@@ -852,7 +851,6 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
     }
 
     PathGenerator path(pathUnit);
-    path.AddExcludeFlag(NAV_GROUND_STEEP);
 
     // Limit the pathfinding attempts
     for (uint32 i = 0; i < maxAttempt; i++)
