@@ -10,6 +10,7 @@
 
 #include "Action.h"
 #include "LastMovementValue.h"
+#include "PathGenerator.h"
 #include "PlayerbotAIConfig.h"
 
 class Player;
@@ -22,12 +23,33 @@ class Position;
 #define ANGLE_90_DEG M_PI_2
 #define ANGLE_120_DEG (2.f * static_cast<float>(M_PI) / 3.f)
 
+// Default acceptable path types for GeneratePath
+constexpr uint32 DEFAULT_PATH_ACCEPT_MASK = PATHFIND_NORMAL | PATHFIND_INCOMPLETE;
+constexpr uint32 RELAXED_PATH_ACCEPT_MASK = PATHFIND_NORMAL | PATHFIND_INCOMPLETE | PATHFIND_FARFROMPOLY;
+
+struct PathResult
+{
+    Movement::PointsArray points;
+    G3D::Vector3 actualEnd;
+    G3D::Vector3 end;
+    PathType pathType;
+    bool reachable;
+};
+
 class MovementAction : public Action
 {
 public:
     MovementAction(PlayerbotAI* botAI, std::string const name);
 
 protected:
+    // Emit a one-line trace describing the imminent movement. No-op
+    // unless the bot has the "debug move" non-combat strategy.
+    // Subclasses (e.g. NewRpgBaseAction) may override to append richer
+    // context such as RPG status and target name. Optional `extra`
+    // is appended verbatim (use it to attach hop labels like
+    // "node:Stormwind innkeeper" or fallback reasons).
+    virtual void EmitDebugMove(char const* method, char const* generator, float x, float y, float z, char const* extra = nullptr);
+
     bool JumpTo(uint32 mapId, float x, float y, float z, MovementPriority priority = MovementPriority::MOVEMENT_NORMAL);
     bool MoveNear(uint32 mapId, float x, float y, float z, float distance = sPlayerbotAIConfig.contactDistance,
                   MovementPriority priority = MovementPriority::MOVEMENT_NORMAL);
@@ -66,6 +88,31 @@ protected:
     bool FleePosition(Position pos, float radius, uint32 minInterval = 1000);
     bool CheckLastFlee(float curAngle, std::list<FleeInfo>& infoList);
 
+    PathResult GeneratePath(float x, float y, float z, uint32 acceptMask = DEFAULT_PATH_ACCEPT_MASK, bool forceDestination = false);
+
+    bool GetTravelPlan(TravelPlan& plan, WorldPosition destination);
+    bool ExecuteTravelPlan(TravelPlan& state);
+
+    // Transport boarding helpers (shared by FollowAction and travel plan)
+    static Transport* GetTransportForPosTolerant(Map* map, WorldObject* ref,
+        uint32 phaseMask, float x, float y, float z);
+    static bool FindBoardingPointOnTransport(Map* map, Transport* transport,
+        WorldObject* ref, float refX, float refY, float refZ,
+        float botX, float botY, float botZ,
+        float& outX, float& outY, float& outZ);
+    bool BoardTransport(Transport* transport);
+
+private:
+    bool LaunchWalkSpline(TravelPlan& state);
+    bool CheckSplineProgress(TravelPlan& state);
+    bool MoveToSpline(TravelPlan& state, WorldPosition target);
+    // Per-segment mmap refinement of a travel-node-graph walk batch.
+    // The graph stores offline-baked coords whose straight-line
+    // interpolation may pass through geometry the bot can't actually
+    // traverse. Returns false if any segment is unwalkable per the
+    // live navmesh, in which case the caller should abort the plan.
+    bool RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints);
+
 protected:
     struct CheckAngle
     {
@@ -74,10 +121,6 @@ protected:
     };
 
 private:
-    // float SearchBestGroundZForPath(float x, float y, float z, bool generatePath, float range = 20.0f, bool
-    // normal_only = false, float step = 8.0f);
-    const Movement::PointsArray SearchForBestPath(float x, float y, float z, float& modified_z, int maxSearchCount = 5,
-                                                  bool normal_only = false, float step = 8.0f);
     bool wasMovementRestricted = false;
     void DoMovePoint(Unit* unit, float x, float y, float z, bool generatePath, bool backwards);
 };
