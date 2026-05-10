@@ -725,7 +725,7 @@ public:
     std::vector<TravelNode*> const& GetNodesInZone(uint32 zoneId) const;
 
     bool GetFullPath(TravelPlan& plan, WorldPosition botPos,
-        uint32 botZoneId, WorldPosition destination);
+        uint32 botZoneId, WorldPosition destination, Unit* bot = nullptr);
 
     // Resolve A* route between two world positions (returns node vector)
     std::vector<TravelNode*> ResolveRoute(WorldPosition startPos,

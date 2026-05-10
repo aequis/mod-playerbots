@@ -1285,18 +1285,25 @@ TravelNodeRoute TravelNodeMap::FindRouteNearestNodes(WorldPosition startPos, Wor
 
 bool TravelNodeMap::GetFullPath(TravelPlan& plan,
     WorldPosition botPos, uint32 botZoneId,
-    WorldPosition destination)
+    WorldPosition destination, Unit* bot)
 {
     plan.Reset();
     plan.destination = destination;
 
-    // Short distance — direct walk, no nodes needed
-    if (botPos.fDist(destination) < MAX_PATHFINDING_DISTANCE &&
-        botPos.GetMapId() == destination.GetMapId())
+    // mmap-probe-first. Run a 40-step chained probe; if it gets within
+    // spellDistance of dest, emit it as plan steps and skip the graph
+    // entirely (a short walk is always better than a node hop). When
+    // the probe falls short, fall through to graph routing.
+    if (botPos.GetMapId() == destination.GetMapId())
     {
-        plan.steps.addPoint(botPos, PathNodeType::NODE_PREPATH);
-        plan.steps.addPoint(destination, PathNodeType::NODE_PATH);
-        return true;
+        std::vector<WorldPosition> probe = destination.getPathFromPath({botPos}, bot, 40);
+        if (probe.size() >= 2 && destination.isPathTo(probe, sPlayerbotAIConfig.spellDistance))
+        {
+            plan.steps.addPoint(botPos, PathNodeType::NODE_PREPATH);
+            for (size_t i = 1; i < probe.size(); ++i)
+                plan.steps.addPoint(probe[i], PathNodeType::NODE_PATH);
+            return true;
+        }
     }
 
     std::shared_lock<std::shared_timed_mutex> guard(m_nMapMtx);

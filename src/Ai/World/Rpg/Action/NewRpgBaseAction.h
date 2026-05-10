@@ -76,19 +76,18 @@ protected:
     bool RandomChangeStatus(std::vector<NewRpgStatus> candidateStatus);
     bool CheckRpgStatusAvailable(NewRpgStatus status);
 
-protected:
-    /* FOR MOVE FAR */
-    // Distance at which MoveFarTo considers the travel-node graph as
-    // a routing option. Below this, the move is short enough that
-    // mmap handles it directly. Above this, mmap is *still probed
-    // first* via the 40-step chained pathfinder; the node graph
-    // only takes over if mmap can't get within spellDistance of
-    // the destination.
-    const float nodeFirstDis = 75.0f;
-
 private:
     void StartTravelPlan(WorldPosition dest);
     bool UpdateTravelPlan();
+
+    // Centralized dispatch helper. Applies underwater fixup, ClipPath
+    // (truncate at first hostile in attack range with LOS, level+5 cap),
+    // inactive-bot teleport (with self-bot carve-out), masterWalking
+    // mode, pre-dispatch state cleanup, then dispatches via
+    // MoveSplinePath and schedules via WaitForReach formula.
+    bool DispatchPathPoints(WorldPosition const& dest,
+                            Movement::PointsArray& points,
+                            char const* label);
 };
 
 #endif

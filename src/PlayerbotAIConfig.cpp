@@ -97,6 +97,7 @@ bool PlayerbotAIConfig::Initialize()
     tooCloseDistance = sConfigMgr->GetOption<float>("AiPlayerbot.TooCloseDistance", 5.0f);
     meleeDistance = sConfigMgr->GetOption<float>("AiPlayerbot.MeleeDistance", 0.75f);
     followDistance = sConfigMgr->GetOption<float>("AiPlayerbot.FollowDistance", 1.5f);
+    walkDistance = sConfigMgr->GetOption<float>("AiPlayerbot.WalkDistance", 5.0f);
     whisperDistance = sConfigMgr->GetOption<float>("AiPlayerbot.WhisperDistance", 6000.0f);
     contactDistance = sConfigMgr->GetOption<float>("AiPlayerbot.ContactDistance", 0.45f);
     aoeRadius = sConfigMgr->GetOption<float>("AiPlayerbot.AoeRadius", 10.0f);
