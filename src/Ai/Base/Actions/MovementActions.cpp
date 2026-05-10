@@ -977,7 +977,6 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
         return false;
 
     PathGenerator path(bot);
-    path.AddExcludeFlag(NAV_GROUND_STEEP);
     path.CalculatePath(tx, ty, tz, false);
     PathType type = path.GetPathType();
     int typeOk = PATHFIND_NORMAL | PATHFIND_INCOMPLETE | PATHFIND_SHORTCUT;
@@ -1885,7 +1884,6 @@ PathResult MovementAction::GeneratePath(float x, float y, float z, uint32 accept
 {
     PathResult result;
     PathGenerator gen(bot);
-    gen.AddExcludeFlag(NAV_GROUND_STEEP);
     gen.CalculatePath(x, y, z, forceDestination);
     result.pathType = gen.GetPathType();
     result.reachable = !(result.pathType & (~acceptMask));

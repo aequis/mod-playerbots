@@ -4292,7 +4292,6 @@ bool ArenaTactics::Execute(Event /*event*/)
         if (losBlocked)
         {
             PathGenerator path(bot);
-            path.AddExcludeFlag(NAV_GROUND_STEEP);
             path.CalculatePath(target->GetPositionX(), target->GetPositionY(), target->GetPositionZ(), false);
 
             if (path.GetPathType() != PATHFIND_NOPATH)
