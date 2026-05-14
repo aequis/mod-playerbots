@@ -162,8 +162,6 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         StartTravelPlan(dest);
         if (botAI->rpgInfo.HasActiveTravelPlan())
         {
-            LOG_INFO("playerbots", "[MoveFar] {} nodetravel | dis={:.0f}",
-                bot->GetName(), dis);
             EmitDebugMove("MoveFar", "travelplan",
                           dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
             return UpdateTravelPlan();
@@ -230,9 +228,6 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
 
             if (points.size() >= 2)
             {
-                LOG_INFO("playerbots", "[MoveFar] {} mmap-path | dis={:.0f} | endDist={:.0f} | wp={}",
-                    bot->GetName(), dis, endDistToDest, (uint32)points.size());
-
                 // Mount up if outdoors and not in combat.
                 if (!bot->IsMounted() && !bot->IsInCombat() && bot->IsOutdoors() && bot->IsAlive())
                     botAI->DoSpecificAction("check mount state", Event(), true);
@@ -437,9 +432,6 @@ void NewRpgBaseAction::StartTravelPlan(WorldPosition dest)
 {
     TravelPlan& plan = botAI->rpgInfo.travelPlan;
     GetTravelPlan(plan, dest);
-
-    LOG_DEBUG("playerbots","[New RPG] Bot {} starting travel plan to ({:.0f},{:.0f},{:.0f}) map={}, {} points",
-        bot->GetName(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(), dest.GetMapId(), plan.steps.size());
 }
 
 bool NewRpgBaseAction::UpdateTravelPlan()
