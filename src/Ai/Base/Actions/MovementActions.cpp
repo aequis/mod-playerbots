@@ -3284,15 +3284,6 @@ bool MovementAction::GetTravelPlan(TravelPlan& plan, WorldPosition destination)
 {
     WorldPosition botPos(bot->GetMapId(), bot->GetPositionX(),
                          bot->GetPositionY(), bot->GetPositionZ());
-
-    LOG_DEBUG("playerbots",
-        "[TravelPlan] {} requesting plan: from ({:.0f},{:.0f},{:.0f}) map={} zone={} → "
-        "({:.0f},{:.0f},{:.0f}) map={} (straight={:.0f}yd)",
-        bot->GetName(), botPos.GetPositionX(), botPos.GetPositionY(), botPos.GetPositionZ(),
-        bot->GetMapId(), bot->GetZoneId(),
-        destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ(),
-        destination.GetMapId(), botPos.fDist(destination));
-
     return sTravelNodeMap.GetFullPath(plan, botPos, bot->GetZoneId(), destination, bot);
 }
 
@@ -3616,8 +3607,7 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
             if (bot->IsMounted())
                 bot->Dismount();
 
-            if (bot->ActivateTaxiPathTo(state.route, flightMaster, 0))
-                LOG_DEBUG("playerbots","[TravelPlan] Bot {} taking flight ({} nodes)", bot->GetName(), state.route.size());
+            bot->ActivateTaxiPathTo(state.route, flightMaster, 0);
 
             state.route.clear();
             state.stepIdx += 2;
