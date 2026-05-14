@@ -226,11 +226,8 @@ TravelNodePath* TravelNode::BuildPath(TravelNode* endNode, Unit* bot, bool postP
 
     bool canPath = endPos->isPathTo(path);  // Check if we reached our destination.
 
-    // Reject "pathfinder cheating" — too-short or too-steep results
-    // that mmap accepts but a player can't actually walk. Without this,
-    // the segment gets cached + saved to playerbots_travelnode_path
-    // and dispatched at runtime as straight-line spline through whatever
-    // mountain/cliff sat between A and B (cmangos parity).
+    // Reject too-short or too-steep results — geometry shortcut that
+    // mmap returns but a player can't actually walk.
     if (canPath && TravelPath::IsPathCheating(path, getPosition()->distance(endNode->getPosition())))
         canPath = false;
 
@@ -732,9 +729,9 @@ bool TravelPath::makeShortCut(WorldPosition startPos, float maxDist, Unit* bot)
 
     for (auto& p : fullPath)  // cycle over the full path
     {
-        // Walkability filter (cmangos parity): portals/transports/taxis
-        // aren't valid anchor points — picking one as the new start of
-        // the trimmed path would leave the bot anchored on a hop.
+        // Walkability filter: portals/transports/taxis aren't valid
+        // anchor points — picking one as the new start of the trimmed
+        // path would leave the bot anchored on a hop.
         if (p.point.GetMapId() == startPos.GetMapId() && p.isWalkable())
         {
             float curDist = p.point.sqDistance(startPos);
@@ -792,9 +789,8 @@ bool TravelPath::makeShortCut(WorldPosition startPos, float maxDist, Unit* bot)
     }
 
     // Pass the bot into getPathTo so PathGenerator picks up its
-    // collision / swimming / flying flags. cmangos parity — passing
-    // nullptr here drops to a default mover and can produce a path
-    // the bot itself can't actually walk.
+    // collision/swim/fly state. nullptr defaults to a generic mover
+    // which can produce paths the bot can't actually walk.
     std::vector<WorldPosition> toPath = startPos.getPathTo(beginPos, bot);
 
     // We can not reach the new begin position. Follow the complete path.
@@ -1290,10 +1286,8 @@ bool TravelNodeMap::GetFullPath(TravelPlan& plan,
     plan.Reset();
     plan.destination = destination;
 
-    // mmap-probe-first. Run a 40-step chained probe; if it gets within
-    // spellDistance of dest, emit it as plan steps and skip the graph
-    // entirely (a short walk is always better than a node hop). When
-    // the probe falls short, fall through to graph routing.
+    // mmap-probe first: if a 40-step probe reaches dest, skip the
+    // graph entirely — a direct walk beats a node hop.
     if (botPos.GetMapId() == destination.GetMapId())
     {
         std::vector<WorldPosition> probe = destination.getPathFromPath({botPos}, bot, 40);
