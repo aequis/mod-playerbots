@@ -279,6 +279,28 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
     if (points.size() < 2)
         return false;
 
+    // LOS gate: reject paths whose segments pass through visual
+    // geometry. mmap is blind to M2 models (trees, decorative props)
+    // and will route through them; vmap LOS catches the cases that
+    // matter — solid trunks, walls, terrain features.
+    if (Map* map = bot->GetMap())
+    {
+        float const eye = bot->GetCollisionHeight();
+        for (size_t i = 0; i + 1 < points.size(); ++i)
+        {
+            if (!map->isInLineOfSight(points[i].x, points[i].y, points[i].z + eye,
+                                      points[i + 1].x, points[i + 1].y, points[i + 1].z + eye,
+                                      bot->GetPhaseMask(),
+                                      LINEOFSIGHT_ALL_CHECKS,
+                                      VMAP::ModelIgnoreFlags::Nothing))
+            {
+                EmitDebugMove("MoveFar", "blocked",
+                              dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
+                return false;
+            }
+        }
+    }
+
     // Save planner output before clip/fixup so next-tick reuse sees
     // the original intent, not a truncated tail.
     {
