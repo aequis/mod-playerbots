@@ -3233,9 +3233,8 @@ bool MovementAction::RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints)
         // Travelnode waypoints are authoritative once a plan is
         // active. When AC mmap can't validate the segment, dispatch
         // the raw (A, B) pair instead of aborting the plan. Common
-        // cases: cmangos waypoints landing in 1y navmesh gaps from
-        // AC extractor differences, tile-edge artifacts at zone
-        // borders.
+        // cases: stored waypoints landing in 1y navmesh gaps from
+        // extractor differences, tile-edge artifacts at zone borders.
         bool const trustRaw = segPath.empty() ||
                               TravelPath::IsPathCheating(segPath, aPos.distance(bPos));
 
