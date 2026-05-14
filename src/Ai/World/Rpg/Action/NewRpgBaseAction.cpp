@@ -282,6 +282,18 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     if (bot->GetMapId() != dest.GetMapId())
         return false;
 
+    // LOS gate — refuse to dispatch a straight-line spline when
+    // the dest isn't in line of sight. Engine PathGenerator may
+    // return a BuildShortcut 2-point line through visual obstacles
+    // (trees, walls) when start/end polyref resolution fails. Let
+    // UnstuckAction handle prolonged stuck states.
+    if (!bot->IsWithinLOS(dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ()))
+    {
+        EmitDebugMove("MoveFar", "spline-blocked",
+                      dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
+        return false;
+    }
+
     EmitDebugMove("MoveFar", "spline",
                   dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
     return MoveTo(dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(),
