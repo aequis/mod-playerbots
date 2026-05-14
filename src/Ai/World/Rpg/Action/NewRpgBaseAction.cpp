@@ -71,11 +71,8 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         }
     }
 
-    // Let previously committed movement finish before recomputing.
-    // If the bot is still actively walking toward its last committed
-    // point on the same map, just let the current spline finish.
-    // Prevents oscillation when a re-resolve produces a slightly
-    // different partial-path endpoint mid-walk.
+    // Let an in-flight spline finish before recomputing — prevents
+    // oscillation when re-resolve produces a slightly different endpoint.
     {
         LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
         if (bot->isMoving() && lastMove.lastMoveToMapId == bot->GetMapId())
@@ -93,9 +90,9 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     // 10% lastPath reuse — if the cached path's endpoint is still
     // close (within 10%) to the new dest, trim the cached path to
     // the bot's current position via makeShortCut and re-dispatch.
-    // Mirrors cmangos ResolveMovePath: per-tick re-dispatch of the
-    // (trimmed) last path keeps the bot on-route after interrupts
-    // (knockback, combat, manual move) without needing a full replan.
+    // Per-tick re-dispatch of the (trimmed) last path keeps the bot
+    // on-route after interrupts (knockback, combat, manual move)
+    // without needing a full replan.
     {
         LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
         if (!lastMove.lastPath.empty())
@@ -140,26 +137,16 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     float disToDest = bot->GetDistance(dest);
     float dis = bot->GetExactDist(dest);
 
-    // Decision tree:
-    //   1. Active node plan with matching dest → ride it.
-    //   2. Long-distance / cross-map: try the node graph FIRST.
-    //      Graph internally probes mmap and falls back to A* route.
-    //   3. Else: 40-step chained mmap probe + regression guard.
-    //   4. Empty / non-progressing probe: single-waypoint MoveTo.
-    //
-    // needsLongPath gate — cross-map or > 50y go to graph.
-    // BG gating: graph holds open-world routes only.
+    // Try the travel-node graph first for cross-map or > 50y moves;
+    // fall back to chained mmap probe otherwise. BGs skip the graph.
     constexpr float TRAVELNODE_THRESHOLD = 50.0f;
     bool tryNodes = sPlayerbotAIConfig.enableTravelNodes &&
                     !bot->InBattleground() &&
                     ((bot->GetMapId() != dest.GetMapId()) ||
                      (dis > TRAVELNODE_THRESHOLD));
 
-    // If a node plan is already active, ride it — but only if its
-    // destination still matches the requested dest. Otherwise the
-    // old plan (e.g. built toward a quest objective POI) would keep
-    // driving the bot after the caller switched targets (e.g. to a
-    // turn-in NPC).
+    // Ride the active node plan only if its dest still matches.
+    // A stale plan would steer the bot past a new target.
     if (tryNodes && botAI->rpgInfo.HasActiveTravelPlan())
     {
         if (botAI->rpgInfo.travelPlan.destination.distance(dest) > 10.0f)
@@ -194,13 +181,8 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     WorldPosition botPos(bot);
     std::vector<WorldPosition> probe = botPos.getPathTo(dest, bot);
 
-    // Regression guard (cmangos ResolveMovePath parity): if a cached
-    // lastPath ends at least as close to dest as the new probe's
-    // endpoint, prefer the cached path. The 10% reuse block above
-    // already returned early when cached was within 10% of dest;
-    // this catches "cached is far (>10%) but still better than the
-    // probe" — typically when the probe got blocked by geometry and
-    // ended much farther from dest than where cached had reached.
+    // Regression guard: prefer cached lastPath if it still ends closer
+    // to dest than the new probe — catches probes blocked by geometry.
     {
         LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
         if (!lastMove.lastPath.empty() && !probe.empty() && probe.size() >= 2)
@@ -275,18 +257,13 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         }
     }
 
-    // Empty-probe fallback — single-waypoint MoveTo. Engine
-    // MovePoint(generatePath=true) does the local PathGenerator
-    // resolution. Cross-map can't be served by a single-map spline
-    // — bail rather than dispatching toward unreachable coords.
+    // Empty-probe fallback: single-waypoint MoveTo via engine PathGenerator.
+    // Cross-map can't be served by a single-map spline — bail.
     if (bot->GetMapId() != dest.GetMapId())
         return false;
 
-    // LOS gate — refuse to dispatch a straight-line spline when
-    // the dest isn't in line of sight. Engine PathGenerator may
-    // return a BuildShortcut 2-point line through visual obstacles
-    // (trees, walls) when start/end polyref resolution fails. Let
-    // UnstuckAction handle prolonged stuck states.
+    // LOS gate: don't air-walk through trees/walls when the engine
+    // would otherwise drop to a straight-line BuildShortcut spline.
     if (!bot->IsWithinLOS(dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ()))
     {
         EmitDebugMove("MoveFar", "spline-blocked",
@@ -307,9 +284,8 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
     if (points.size() < 2)
         return false;
 
-    // Save planner output BEFORE any clip/fixup mutation so next-tick
-    // reuse/regress branches see the original intent, not a clip-
-    // truncated tail.
+    // Save planner output before clip/fixup so next-tick reuse sees
+    // the original intent, not a truncated tail.
     {
         LastMovement& lm = AI_VALUE(LastMovement&, "last movement");
         std::vector<WorldPosition> wpts;
@@ -319,9 +295,8 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
         lm.setPath(TravelPath(wpts));
     }
 
-    // Underwater fixup — push waypoints submerged below the water
-    // surface up to the surface itself, unless the destination is
-    // itself underwater.
+    // Underwater fixup: lift submerged waypoints to the surface,
+    // unless the destination is itself underwater.
     if (Map* map = bot->GetMap())
     {
         WorldPosition destWp = dest;
@@ -391,10 +366,8 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
 
     LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
 
-    // Inactive-bot teleport — when the path is longer than reactDistance
-    // and no real player is around to witness, jump to the path tail and
-    // schedule a cooldown. Skips cosmetic walking for unobserved random
-    // bots. Self-bots are excluded so observed sessions always walk.
+    // Skip cosmetic walking for random bots with no nearby player —
+    // teleport to the path tail and schedule a cooldown instead.
     if (sRandomPlayerbotMgr.IsRandomBot(bot))
     {
         WorldPosition tail(dest.GetMapId(), last.x, last.y, last.z);
@@ -417,9 +390,7 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
         }
     }
 
-    // masterWalking — match the master's walk pace when they're nearby
-    // and walking. Lets a follower bot trail at walk speed instead of
-    // sprinting past. No-op for masterless RPG bots.
+    // Match master's walk pace when they're nearby and walking.
     ForcedMovement moveMode = FORCED_MOVEMENT_RUN;
     if (sPlayerbotAIConfig.walkDistance > 0.0f)
     {
@@ -433,8 +404,7 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
         }
     }
 
-    // Pre-dispatch state cleanup. Clear emote / stand up / interrupt
-    // any non-melee cast so the spline can begin without state conflicts.
+    // Clear emote/sit/cast so the spline can begin cleanly.
     bot->ClearEmoteState();
     if (!bot->IsStandState())
         bot->SetStandState(UNIT_STAND_STATE_STAND);
@@ -446,9 +416,7 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
 
     EmitDebugMove("MoveFar", label, last.x, last.y, last.z);
 
-    // WaitForReach scheduling.
-    //   waitDist = (totalDist > reactDistance) ? totalDist - 10 : totalDist
-    //   duration = 1000 * (waitDist / speed) + reactDelay, capped at maxWaitForMove
+    // WaitForReach: leave ~10y headroom on long paths.
     float waitDist = totalDist > sPlayerbotAIConfig.reactDistance
                          ? std::max(totalDist - 10.0f, 0.0f) : totalDist;
     UnitMoveType const speedType = (moveMode == FORCED_MOVEMENT_WALK) ? MOVE_WALK : MOVE_RUN;
@@ -513,11 +481,8 @@ bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
         y = object->GetPositionY();
         z = object->GetPositionZ();
     }
-    // Delegate to MoveFarTo so every approach gets the chained mmap
-    // probe + spellDistance shortcut + travel-node fallback instead
-    // of a single direct MoveTo. The debug-move trace then labels
-    // the actual mechanism (spline / mmap / nodetravel) rather than
-    // a generic "MoveWorldObjectTo:spline".
+    // Route through MoveFarTo so every approach gets the full probe
+    // + travel-node fallback (and a precise debug label).
     return MoveFarTo(WorldPosition(object->GetMapId(), x, y, z));
 }
 
@@ -530,11 +495,7 @@ bool NewRpgBaseAction::MoveRandomNear(float moveStep, MovementPriority priority,
     const float x = bot->GetPositionX();
     const float y = bot->GetPositionY();
     const float z = bot->GetPositionZ();
-    // Previously: attempts = 1. A single random sample often landed in
-    // water / blocked geometry / unreachable poly, the function returned
-    // false, and the caller had no fallback — bot stood still. Retry a
-    // handful of times with a fresh distance each loop so a bad roll
-    // doesn't lock the bot in place.
+    // Retry random samples so one bad roll doesn't lock the bot in place.
     for (int attempt = 0; attempt < 8; ++attempt)
     {
         float distance = (0.4f + rand_norm() * 0.6f) * moveStep;

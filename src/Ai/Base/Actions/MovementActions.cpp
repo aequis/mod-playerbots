@@ -386,14 +386,8 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
     else
     {
         // Direct dispatch — engine MovePoint(generatePath=true) handles
-        // path-finding internally. Previously called SearchForBestPath
-        // here to probe ±step around the target z; that helped find
-        // polygons when the input z was several yards off the navmesh,
-        // but its "shortest path" preference would shift modifiedZ to
-        // an unreachable nearby polygon (upper terrace, ledge above)
-        // and then the engine's straight-spline NOPATH fallback would
-        // air-walk the bot up to it. cmangos doesn't have an
-        // equivalent — single-z PathFinder call is sufficient.
+        // pathfinding. Avoid ±z probes: their "shortest path" preference
+        // can pick an unreachable ledge and air-walk via NOPATH fallback.
         float distance = bot->GetExactDist(x, y, z);
         if (distance > 0.01f)
         {
@@ -1179,7 +1173,7 @@ void MovementAction::UpdateMovementState()
     // {
     //     bot->SetSpeedRate(MOVE_RUN, 1.0f);
     // }
-    // check if target is not reachable (from Vmangos)
+    // check if target is not reachable
     // if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == CHASE_MOTION_TYPE && bot->CanNotReachTarget() &&
     // !bot->InBattleground())
     // {
@@ -3221,20 +3215,12 @@ bool MovementAction::RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints)
         WorldPosition aPos(mapId, a.x, a.y, a.z);
         WorldPosition bPos(mapId, b.x, b.y, b.z);
 
-        // Per-segment mmap query against the live navmesh. The
-        // travel-node graph stores offline-baked waypoints; if the
-        // straight line A->B crosses geometry the live navmesh has
-        // (mountain, ledge, model edit since offline gen), this
-        // returns either an mmap-routed path around it (NORMAL/
-        // INCOMPLETE) or empty (NOT_USING_PATH was rejected as
-        // "would walk through walls").
+        // Per-segment mmap query: routes around geometry the offline
+        // graph didn't account for, or returns empty if unreachable.
         std::vector<WorldPosition> segPath = bPos.getPathStepFrom(aPos, bot);
 
-        // Travelnode waypoints are authoritative once a plan is
-        // active. When AC mmap can't validate the segment, dispatch
-        // the raw (A, B) pair instead of aborting the plan. Common
-        // cases: stored waypoints landing in 1y navmesh gaps from
-        // extractor differences, tile-edge artifacts at zone borders.
+        // Trust the raw waypoint pair when mmap can't validate it —
+        // navmesh gaps/tile-edge artifacts shouldn't kill an active plan.
         bool const trustRaw = segPath.empty() ||
                               TravelPath::IsPathCheating(segPath, aPos.distance(bPos));
 
@@ -3246,9 +3232,8 @@ bool MovementAction::RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints)
             continue;
         }
 
-        // First segment: include its start point so the spline
-        // begins from the original A. Later segments: skip the first
-        // point — it duplicates the previous segment's tail.
+        // Include the first segment's start; skip subsequent starts
+        // to avoid duplicating the prior segment's tail.
         size_t startK = (i == 0) ? 0 : 1;
         for (size_t k = startK; k < segPath.size(); ++k)
             refined.emplace_back(segPath[k].GetPositionX(),
@@ -3471,14 +3456,8 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
                 return true;
             }
 
-            // Re-validate each consecutive (A, B) pair against the
-            // live navmesh. The graph's offline-baked coords can
-            // produce a chain whose straight-line interpolation
-            // passes through geometry (mountains, ledges, model
-            // edits). RefineWalkPoints substitutes mmap-routed
-            // sub-paths between each pair; if any segment is
-            // unwalkable, abort the plan so MoveFarTo's own probe
-            // can re-derive a route.
+            // Re-validate each segment against the live navmesh and
+            // substitute mmap-routed sub-paths where needed.
             if (!RefineWalkPoints(state.walkPoints))
             {
                 G3D::Vector3 const& failPt = state.walkPoints.empty()

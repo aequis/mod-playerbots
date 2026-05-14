@@ -13,8 +13,7 @@
 
 // THEORY
 //
-//  Pathfinding in (c)mangos is based on detour recast, an opensource navmesh creation and pathfinding codebase.
-//  This system is used for mob and npc pathfinding and in this codebase also for bots.
+//  Pathfinding uses the detour recast navmesh engine for mob, npc, and bot movement.
 //  Because mobs and npc movement is based on following a player or a set path the PathGenerator is limited to 296y.
 //  This means that when trying to find a path from A to B distances beyond 296y will be a best guess often moving in a
 //  straight path. Bots would get stuck moving from Northshire to Stormwind because there is no 296y path that doesn't
@@ -493,16 +492,8 @@ public:
 
     bool makeShortCut(WorldPosition startPos, float maxDist, Unit* bot = nullptr);
 
-    // Detect "pathfinder cheating" — paths that PathGenerator accepts
-    // but a player can't actually walk:
-    //   * a 2-point path for an endpoint distance > 5y means navmesh
-    //     gave up and returned the straight A->B line.
-    //   * a vertical drop > 10y combined with a slope steeper than
-    //     2:1 at either start or end means the pathfinder hopped
-    //     through a near-vertical step the navmesh permits but a
-    //     player wouldn't survive.
-    // cmangos applies the same two checks in TravelNode::buildPath
-    // before caching a node-to-node segment.
+    // Reject paths the navmesh accepts but a player can't walk:
+    // 2-point shortcut over 5y, or > 10y vertical drop with slope steeper than 2:1.
     static bool IsPathCheating(std::vector<WorldPosition> const& path,
                                float endpointDistance);
 
