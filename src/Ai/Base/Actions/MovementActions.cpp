@@ -3231,32 +3231,16 @@ bool MovementAction::RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints)
         std::vector<WorldPosition> segPath = bPos.getPathStepFrom(aPos, bot);
 
         // Travelnode waypoints are authoritative once a plan is
-        // active. When AC mmap can't validate the segment (empty
-        // result, or IsPathCheating rejects a 2-point shortcut /
-        // steep hop), fall back to dispatching the raw (A, B) pair
-        // instead of aborting the plan — but only if vmap LOS is
-        // clear between A and B. Without LOS check, "trust raw"
-        // tunnels through visual-only obstacles (trees, models) that
-        // aren't in the navmesh.
-        bool const mmapFail = segPath.empty() ||
+        // active. When AC mmap can't validate the segment, dispatch
+        // the raw (A, B) pair instead of aborting the plan. Common
+        // cases: cmangos waypoints landing in 1y navmesh gaps from
+        // AC extractor differences, tile-edge artifacts at zone
+        // borders.
+        bool const trustRaw = segPath.empty() ||
                               TravelPath::IsPathCheating(segPath, aPos.distance(bPos));
 
-        if (mmapFail)
+        if (trustRaw)
         {
-            Map* m = bot->GetMap();
-            bool const inLos = m && m->isInLineOfSight(
-                a.x, a.y, a.z + 1.0f,
-                b.x, b.y, b.z + 1.0f,
-                bot->GetPhaseMask(), LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing);
-
-            if (!inLos)
-            {
-                // Visual obstacle between A and B — don't tunnel.
-                // Abort the plan so MoveFarTo can re-derive a route
-                // that mmap can verify.
-                return false;
-            }
-
             if (i == 0)
                 refined.emplace_back(a);
             refined.emplace_back(b);
