@@ -554,6 +554,13 @@ bool NewRpgBaseAction::MoveRandomNear(float moveStep, MovementPriority priority,
         if (map->IsInWater(bot->GetPhaseMask(), dx, dy, dz, bot->GetCollisionHeight()))
             continue;
 
+        // Reject samples whose straight-line passes through visual
+        // obstacles (trees, models) that aren't in the navmesh. The
+        // smooth-path step can otherwise interpolate a waypoint inside
+        // a tree, making the bot visibly walk through it.
+        if (!bot->IsWithinLOS(dx, dy, dz))
+            continue;
+
         bool moved = MoveTo(bot->GetMapId(), dx, dy, dz, false, false, false, true, priority);
         if (moved)
         {
