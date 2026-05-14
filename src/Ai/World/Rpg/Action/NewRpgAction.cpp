@@ -433,6 +433,45 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
             return MoveRandomNear(20.0f);
     }
 
+    // Kill-quest scout: at POI for 30s+ with no quest mob in sight
+    // means this cluster is empty. Switch to a different POI candidate
+    // (>50y away) if one exists; otherwise roam in place.
+    constexpr uint32 scoutTimeoutMs = 30 * 1000;
+    if (data.lastReachPOI && GetMSTimeDiffToNow(data.lastReachPOI) >= scoutTimeoutMs &&
+        !HasNearbyQuestMob(30.0f))
+    {
+        std::vector<POIInfo> poiInfo;
+        if (GetQuestPOIPosAndObjectiveIdx(questId, poiInfo))
+        {
+            std::vector<size_t> alternatives;
+            for (size_t i = 0; i < poiInfo.size(); ++i)
+            {
+                float dx = poiInfo[i].pos.x - data.pos.GetPositionX();
+                float dy = poiInfo[i].pos.y - data.pos.GetPositionY();
+                if (dx * dx + dy * dy > 50.0f * 50.0f)
+                    alternatives.push_back(i);
+            }
+            if (!alternatives.empty())
+            {
+                size_t pickIdx = alternatives[urand(0, alternatives.size() - 1)];
+                G3D::Vector2 newPoi = poiInfo[pickIdx].pos;
+                float dz = std::max(bot->GetMap()->GetHeight(newPoi.x, newPoi.y, MAX_HEIGHT),
+                                    bot->GetMap()->GetWaterLevel(newPoi.x, newPoi.y));
+                if (dz != INVALID_HEIGHT && dz != VMAP_INVALID_HEIGHT_VALUE)
+                {
+                    data.pos = WorldPosition(bot->GetMapId(), newPoi.x, newPoi.y, dz);
+                    data.objectiveIdx = poiInfo[pickIdx].objectiveIdx;
+                    data.lastReachPOI = 0;
+                    data.pursuedLootGO.Clear();
+                    data.pursuedUseGO.Clear();
+                    data.pursuedUseTarget.Clear();
+                    return true;
+                }
+            }
+        }
+        return MoveRandomNear(20.0f);
+    }
+
     // kill quest: walk toward the marker before handing off to grind.
     // lastReachPOI trips at ~10y so without this the bot fights on the
     // edge and never reaches the dense cluster. Skip if a quest mob is
