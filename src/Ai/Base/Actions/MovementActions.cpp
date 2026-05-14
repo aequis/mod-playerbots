@@ -3230,20 +3230,22 @@ bool MovementAction::RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints)
         // "would walk through walls").
         std::vector<WorldPosition> segPath = bPos.getPathStepFrom(aPos, bot);
 
-        if (segPath.empty())
-        {
-            // Live mmap refuses A->B. Caller should abort the plan
-            // and let MoveFarTo's own probe re-derive a route.
-            return false;
-        }
+        // Travelnode waypoints are authoritative once a plan is
+        // active. When AC mmap can't validate the segment (empty
+        // result, or IsPathCheating rejects a 2-point shortcut /
+        // steep hop), fall back to dispatching the raw (A, B) pair
+        // instead of aborting the plan. Common cases: cmangos
+        // waypoints landing in 1y navmesh gaps from AC extractor
+        // differences, tile-edge artifacts at zone borders.
+        bool const trustRaw = segPath.empty() ||
+                              TravelPath::IsPathCheating(segPath, aPos.distance(bPos));
 
-        // Reject "pathfinder cheating" — same checks the offline gen
-        // applies to BuildPath. Catches cached segments where the
-        // live navmesh still produces a near-vertical hop or a
-        // 2-point straight line through geometry.
-        if (TravelPath::IsPathCheating(segPath, aPos.distance(bPos)))
+        if (trustRaw)
         {
-            return false;
+            if (i == 0)
+                refined.emplace_back(a);
+            refined.emplace_back(b);
+            continue;
         }
 
         // First segment: include its start point so the spline
