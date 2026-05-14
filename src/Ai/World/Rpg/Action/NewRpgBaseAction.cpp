@@ -147,9 +147,9 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     //   3. Else: 40-step chained mmap probe + regression guard.
     //   4. Empty / non-progressing probe: single-waypoint MoveTo.
     //
-    // needsLongPath gate — cross-map or > 75y go to graph.
+    // needsLongPath gate — cross-map or > 50y go to graph.
     // BG gating: graph holds open-world routes only.
-    constexpr float TRAVELNODE_THRESHOLD = 75.0f;
+    constexpr float TRAVELNODE_THRESHOLD = 50.0f;
     bool tryNodes = sPlayerbotAIConfig.enableTravelNodes &&
                     !bot->InBattleground() &&
                     ((bot->GetMapId() != dest.GetMapId()) ||
