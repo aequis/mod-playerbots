@@ -463,7 +463,9 @@ bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
         angle = object->GetOrientation() +
                 (M_PI * irand(-25, 25) / 100.0);  // 45 degrees infront of target (leading it's movement)
 
-    float rnd = rand_norm();
+    // Bias toward the full radius so the bot stops next to the object,
+    // not on top of it. Uniform rnd would put dest anywhere in [0, distance].
+    float rnd = 0.85f + 0.15f * rand_norm();
     x += cos(angle) * distance * rnd;
     y += sin(angle) * distance * rnd;
     if (!object->GetMap()->CheckCollisionAndGetValidCoords(object, object->GetPositionX(), object->GetPositionY(),
