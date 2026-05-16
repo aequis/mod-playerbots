@@ -3221,34 +3221,26 @@ bool MovementAction::RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints)
         WorldPosition aPos(mapId, a.x, a.y, a.z);
         WorldPosition bPos(mapId, b.x, b.y, b.z);
 
-        // Per-segment mmap query against the live navmesh. The
-        // travel-node graph stores offline-baked waypoints; if the
-        // straight line A->B crosses geometry the live navmesh has
-        // (mountain, ledge, model edit since offline gen), this
-        // returns either an mmap-routed path around it (NORMAL/
-        // INCOMPLETE) or empty (NOT_USING_PATH was rejected as
-        // "would walk through walls").
+        // Per-segment mmap query: routes around geometry the offline
+        // graph didn't account for, or returns empty if unreachable.
         std::vector<WorldPosition> segPath = bPos.getPathStepFrom(aPos, bot);
 
-        if (segPath.empty())
+        // Trust the raw waypoint pair when mmap can't validate it —
+        // navmesh gaps/tile-edge artifacts on short segments shouldn't
+        // kill an active plan. Travelnode waypoints are authoritative.
+        bool const trustRaw = segPath.empty() ||
+                              TravelPath::IsPathCheating(segPath, aPos.distance(bPos));
+
+        if (trustRaw)
         {
-            // Live mmap refuses A->B. Caller should abort the plan
-            // and let MoveFarTo's own probe re-derive a route.
-            return false;
+            if (i == 0)
+                refined.emplace_back(a);
+            refined.emplace_back(b);
+            continue;
         }
 
-        // Reject "pathfinder cheating" — same checks the offline gen
-        // applies to BuildPath. Catches cached segments where the
-        // live navmesh still produces a near-vertical hop or a
-        // 2-point straight line through geometry.
-        if (TravelPath::IsPathCheating(segPath, aPos.distance(bPos)))
-        {
-            return false;
-        }
-
-        // First segment: include its start point so the spline
-        // begins from the original A. Later segments: skip the first
-        // point — it duplicates the previous segment's tail.
+        // Include the first segment's start; skip subsequent starts
+        // to avoid duplicating the prior segment's tail.
         size_t startK = (i == 0) ? 0 : 1;
         for (size_t k = startK; k < segPath.size(); ++k)
             refined.emplace_back(segPath[k].GetPositionX(),
