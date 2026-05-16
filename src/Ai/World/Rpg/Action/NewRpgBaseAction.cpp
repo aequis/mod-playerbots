@@ -226,7 +226,9 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
             // polygon graph toward an elevated target it can't reach
             // (quest giver on top of Aldrassil etc.). Refuse to dispatch
             // — bot waits instead of tunneling into the visual model.
-            if (std::fabs(stepDest.GetPositionZ() - dest.GetPositionZ()) > 5.0f)
+            // 10y tolerates normal terrain variation (ramp ends, hill
+            // tops) while still catching clearly unreachable elevations.
+            if (std::fabs(stepDest.GetPositionZ() - dest.GetPositionZ()) > 10.0f)
             {
                 EmitDebugMove("MoveFar", "z-mismatch",
                               dest.GetPositionX(), dest.GetPositionY(),
