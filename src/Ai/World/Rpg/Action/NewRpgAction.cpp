@@ -531,8 +531,29 @@ bool NewRpgDoQuestAction::DoCompletedQuest(NewRpgInfo::DoQuest& data)
         botAI->rpgInfo.ChangeToIdle();
         return true;
     }
-    // waiting for SearchQuestGiverAndAcceptOrReward to pick up the NPC;
-    // wander instead of false so we don't fall through to grind
+    // At the POI marker but quest giver still out of interact range
+    // (typical when the marker is at ground level and the NPC is
+    // elevated — e.g. Tenaron at the top of Aldrassil). Try pathing
+    // to the NPC's actual position so MoveFarTo can invoke travelnodes
+    // for routes the marker-anchored mmap probe can't find.
+    if (ObjectGuid qgGuid = ChooseNpcOrGameObjectToInteract(true, 200.0f))
+    {
+        if (WorldObject* qg = ObjectAccessor::GetWorldObject(*bot, qgGuid))
+        {
+            if (!bot->CanInteractWithQuestGiver(qg))
+            {
+                WorldPosition npcPos(qg->GetMapId(),
+                                     qg->GetPositionX(),
+                                     qg->GetPositionY(),
+                                     qg->GetPositionZ());
+                if (MoveFarTo(npcPos))
+                    return true;
+            }
+        }
+    }
+
+    // No quest giver reachable — wander instead of false so we don't
+    // fall through to grind.
     return MoveRandomNear(15.0f);
 }
 
