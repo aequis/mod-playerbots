@@ -1,5 +1,6 @@
 #include "NewRpgBaseAction.h"
 
+#include <limits>
 #include <sstream>
 
 #include "BroadcastHelper.h"
@@ -293,6 +294,57 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
 {
     if (points.size() < 2)
         return false;
+
+    // Prefix trim (cmangos parity: makeShortCut on every dispatch).
+    // Drop leading waypoints behind the bot's current position so the
+    // spline begins from where the bot actually is, not from a stale
+    // planner-start. Picks the waypoint closest to the bot in 3D and
+    // erases everything before it.
+    {
+        float const bx = bot->GetPositionX();
+        float const by = bot->GetPositionY();
+        float const bz = bot->GetPositionZ();
+        float minSq = std::numeric_limits<float>::max();
+        size_t closest = 0;
+        for (size_t i = 0; i < points.size(); ++i)
+        {
+            float dx = points[i].x - bx;
+            float dy = points[i].y - by;
+            float dz = points[i].z - bz;
+            float sq = dx * dx + dy * dy + dz * dz;
+            if (sq < minSq)
+            {
+                minSq = sq;
+                closest = i;
+            }
+        }
+        if (closest > 0)
+            points.erase(points.begin(), points.begin() + closest);
+        if (points.size() < 2)
+            return false;
+    }
+
+    // Sparse-segment clip (cmangos parity): if any consecutive segment
+    // is longer than ~11.18y, truncate the path at that point. Short,
+    // dense waypoints reduce spline interpolation across visual
+    // obstacles between sparse points; bot re-plans from a closer
+    // position next tick.
+    {
+        constexpr float SPARSE_SEG_SQ = 125.0f;  // sqrt(125) ≈ 11.18y
+        for (size_t i = 1; i < points.size(); ++i)
+        {
+            float dx = points[i].x - points[i - 1].x;
+            float dy = points[i].y - points[i - 1].y;
+            float dz = points[i].z - points[i - 1].z;
+            if (dx * dx + dy * dy + dz * dz > SPARSE_SEG_SQ)
+            {
+                points.resize(i);
+                break;
+            }
+        }
+        if (points.size() < 2)
+            return false;
+    }
 
     // LOS gate: reject paths whose segments pass through visual
     // geometry. mmap is blind to M2 models (trees, decorative props)
