@@ -489,32 +489,61 @@ bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
     if (!object)
         return false;
 
-    float x = object->GetPositionX();
-    float y = object->GetPositionY();
-    float z = object->GetPositionZ();
-    float angle = 0.f;
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
 
-    if (!object->ToUnit() || !object->ToUnit()->isMoving())
-        angle = object->GetAngle(bot) + (M_PI * irand(-25, 25) / 100.0);  // Closest 45 degrees towards the target
-    else
-        angle = object->GetOrientation() +
-                (M_PI * irand(-25, 25) / 100.0);  // 45 degrees infront of target (leading it's movement)
+    // 8-angle deterministic iteration around the target. For each angle,
+    // validate the candidate against the navmesh with a strict ground-only
+    // filter (NAV_GROUND, exclude STEEP/WATER/MAGMA/SLIME). Reject if no
+    // valid poly within 5y XY+Z or if the snap drifts the Z by >10y.
+    // First angle that passes both LOS and navmesh-snap wins.
+    dtNavMeshQuery const* navMeshQuery =
+        map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
+    float const baseAngle = object->GetAngle(bot);
 
-    // Bias toward the full radius so the bot stops next to the object,
-    // not on top of it. Uniform rnd would put dest anywhere in [0, distance].
-    float rnd = 0.85f + 0.15f * rand_norm();
-    x += cos(angle) * distance * rnd;
-    y += sin(angle) * distance * rnd;
-    if (!object->GetMap()->CheckCollisionAndGetValidCoords(object, object->GetPositionX(), object->GetPositionY(),
-                                                           object->GetPositionZ(), x, y, z))
+    for (float step = 0.0f; step < 2.0f * static_cast<float>(M_PI);
+         step += static_cast<float>(M_PI) / 4.0f)
     {
-        x = object->GetPositionX();
-        y = object->GetPositionY();
-        z = object->GetPositionZ();
+        float const angle = baseAngle + step;
+        float x = object->GetPositionX() + std::cos(angle) * distance;
+        float y = object->GetPositionY() + std::sin(angle) * distance;
+        float z = object->GetPositionZ();
+
+        // LOS check at eye height.
+        if (!bot->IsWithinLOS(x, y, z + bot->GetCollisionHeight()))
+            continue;
+
+        // Strict navmesh-snap validation (cmangos ClosestCorrectPoint port).
+        if (navMeshQuery)
+        {
+            dtQueryFilter filter;
+            filter.setIncludeFlags(NAV_GROUND);
+            filter.setExcludeFlags(NAV_GROUND_STEEP | NAV_WATER | NAV_MAGMA | NAV_SLIME);
+
+            float const point[VERTEX_SIZE] = { y, z, x };
+            float const extents[VERTEX_SIZE] = { 5.0f, 5.0f, 5.0f };
+            float closest[VERTEX_SIZE] = { 0.0f, 0.0f, 0.0f };
+            dtPolyRef polyRef = INVALID_POLYREF;
+
+            if (!dtStatusSucceed(navMeshQuery->findNearestPoly(
+                    point, extents, &filter, &polyRef, closest)) ||
+                polyRef == INVALID_POLYREF)
+                continue;
+
+            float const snappedZ = closest[1];
+            if (std::fabs(snappedZ - z) > 10.0f)
+                continue;
+
+            x = closest[2];
+            y = closest[0];
+            z = snappedZ;
+        }
+
+        return MoveFarTo(WorldPosition(object->GetMapId(), x, y, z));
     }
-    // Route through MoveFarTo so every approach gets the full probe
-    // + travel-node fallback (and a precise debug label).
-    return MoveFarTo(WorldPosition(object->GetMapId(), x, y, z));
+
+    return false;
 }
 
 bool NewRpgBaseAction::MoveRandomNear(float moveStep, MovementPriority priority, WorldObject* center)
