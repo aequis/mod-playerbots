@@ -164,13 +164,12 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     //      waypoint spline at dest.
     bool tryNodes = (dis >= nodeFirstDis && sPlayerbotAIConfig.enableTravelNodes);
 
-    // If a node plan is already active, ride it — but only if its
-    // destination still matches the requested dest. Otherwise the
-    // old plan (e.g. built toward a quest objective POI) would keep
-    // driving the bot after the caller switched targets (e.g. to a
-    // turn-in NPC). cmangos's ResolveMovePath dodges this by being
-    // stateless; we have a long-lived plan flag, so check explicitly.
-    if (tryNodes && botAI->rpgInfo.HasActiveTravelPlan())
+    // Ride an active plan to completion as long as its destination
+    // still matches. Remaining distance can drop below nodeFirstDis
+    // mid-route (e.g. crossing a zone border near the target); killing
+    // the plan here would replace remaining waypoints with raw mmap
+    // and often produce a u-turn. Clear only on dest change.
+    if (botAI->rpgInfo.HasActiveTravelPlan())
     {
         if (botAI->rpgInfo.travelPlan.destination.distance(dest) > 10.0f)
             botAI->rpgInfo.ClearTravel();
@@ -192,11 +191,6 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
             return UpdateTravelPlan();
         }
         // Graph returned no plan — fall through to mmap probe.
-    }
-    else if (botAI->rpgInfo.HasActiveTravelPlan())
-    {
-        // Move dropped below node-first threshold — drop any leftover plan.
-        botAI->rpgInfo.ClearTravel();
     }
 
     // 40-step chained mmap probe — fallback when the node graph
