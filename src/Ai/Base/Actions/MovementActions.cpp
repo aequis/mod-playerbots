@@ -3142,6 +3142,29 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
         return true;
     }
 
+    // Sparse-segment clip (cmangos parity): truncate the chain at the
+    // first segment longer than ~11.18y. Spline interpolation between
+    // sparse waypoints can cut corners through visual obstacles (trees,
+    // walls) the navmesh routed around. Bot re-plans from a closer
+    // position next tick where the resolved poly chain is denser.
+    {
+        constexpr float SPARSE_SEG_SQ = 125.0f;  // sqrt(125) ≈ 11.18y
+        for (size_t i = 1; i < state.walkPoints.size(); ++i)
+        {
+            G3D::Vector3 d = state.walkPoints[i] - state.walkPoints[i - 1];
+            if (d.squaredLength() > SPARSE_SEG_SQ)
+            {
+                state.walkPoints.resize(i);
+                break;
+            }
+        }
+        if (state.walkPoints.size() < 2)
+        {
+            state.walkPoints.clear();
+            return true;
+        }
+    }
+
     // Re-clamp cached waypoints to current valid Z. Rows in
     // playerbots_travelnode_path store absolute coords baked at
     // offline generation; if the live navmesh has shifted since
