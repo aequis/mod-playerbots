@@ -221,6 +221,19 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
             stepDest.GetPositionY(), stepDest.GetPositionZ());
         if (endDistToDest + 5.0f < disToDest)
         {
+            // Z gap check: if the probe's last waypoint is well below
+            // the requested destination Z, the chain walked the ground
+            // polygon graph toward an elevated target it can't reach
+            // (quest giver on top of Aldrassil etc.). Refuse to dispatch
+            // — bot waits instead of tunneling into the visual model.
+            if (std::fabs(stepDest.GetPositionZ() - dest.GetPositionZ()) > 5.0f)
+            {
+                EmitDebugMove("MoveFar", "z-mismatch",
+                              dest.GetPositionX(), dest.GetPositionY(),
+                              dest.GetPositionZ());
+                return false;
+            }
+
             Movement::PointsArray points;
             points.reserve(probe.size());
             for (auto const& wp : probe)
