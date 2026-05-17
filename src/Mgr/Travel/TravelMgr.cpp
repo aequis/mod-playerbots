@@ -852,6 +852,15 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
 
     PathGenerator path(pathUnit);
 
+    // Non-progress detection: track best distance-to-target across
+    // iterations. If two consecutive steps fail to improve it, the
+    // chained probe is oscillating between polygons in a local navmesh
+    // pocket — bail to avoid accumulating 40 iterations of useless
+    // waypoints that leave the bot stranded mid-terrain.
+    float bestDistToTarget = std::numeric_limits<float>::max();
+    uint32 noProgress = 0;
+    constexpr uint32 MAX_NO_PROGRESS = 2;
+
     // Limit the pathfinding attempts
     for (uint32 i = 0; i < maxAttempt; i++)
     {
@@ -870,6 +879,18 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
 
         if (isPathTo(subPath))
             break;
+
+        float distNow = this->distance(&subPath.back());
+        if (distNow + 0.5f >= bestDistToTarget)
+        {
+            if (++noProgress >= MAX_NO_PROGRESS)
+                break;
+        }
+        else
+        {
+            bestDistToTarget = distNow;
+            noProgress = 0;
+        }
 
         currentPos = subPath.back();
     }
