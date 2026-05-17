@@ -226,16 +226,10 @@ TravelNodePath* TravelNode::BuildPath(TravelNode* endNode, Unit* bot, bool postP
 
     bool canPath = endPos->isPathTo(path);  // Check if we reached our destination.
 
-    // Reject 2-point paths between non-adjacent nodes — that's
-    // PathGenerator's BuildShortcut fallback "teleporting" the chain
-    // endpoint across whatever lies between, not a real walkable route.
-    if (canPath && path.size() == 2 && getPosition()->distance(endNode->getPosition()) > 5.0f)
-        canPath = false;
-
-    // Reject long final segments. If the last waypoint is >75y from
-    // the second-to-last, the chained probe stalled mid-route and
-    // mmap "teleported" to the destination as the final waypoint —
-    // the bot would air-walk that jump. Path is not a valid route.
+    // Reject long final segments. Catches both BuildShortcut 2-point
+    // teleports (start → end straight line) and chained-probe stalls
+    // where mmap "teleported" to the destination as the final waypoint
+    // after the chain dead-ended. Bot would air-walk that jump.
     if (canPath && path.size() >= 2 && path[path.size() - 2].distance(&path.back()) > 75.0f)
         canPath = false;
 
