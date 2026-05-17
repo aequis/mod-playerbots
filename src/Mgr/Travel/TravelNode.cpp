@@ -2018,6 +2018,9 @@ void TravelNodeMap::saveNodeStore()
 
     hasToSave = false;
 
+    // Phase 1: deletes + nodes + links in a single transaction. ~4400
+    // nodes + ~18000 links = ~22000 prepared statements, comfortably
+    // within MySQL transaction limits.
     PlayerbotsDatabaseTransaction trans = PlayerbotsDatabase.BeginTransaction();
 
     trans->Append(PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_DEL_TRAVELNODE));
@@ -2076,13 +2079,22 @@ void TravelNodeMap::saveNodeStore()
             paths++;
         }
     }
-    // Path points: bulk raw SQL multi-row INSERTs (~500 rows each) instead of
-    // 1M+ individual prepared statements.  Appended to the same transaction so
-    // ordering is guaranteed.
+
+    PlayerbotsDatabase.CommitTransaction(trans);
+
+    // Phase 2: path points in chunked transactions. Previously all
+    // ~1.5M point inserts went into a single mega-transaction which
+    // exceeded MySQL's packet/transaction limits and partial-committed,
+    // corrupting the DB (links saved, paths empty). Chunk now commits
+    // every ~10000 rows. A failed chunk loses only its rows; the rest
+    // survive.
     constexpr uint32 BATCH_SIZE = 500;
+    constexpr uint32 BATCHES_PER_COMMIT = 20;  // 20 * 500 = 10000 rows per tx
     uint32 points = 0;
     std::ostringstream ss;
     uint32 batchCount = 0;
+    uint32 batchesInCurrentTx = 0;
+    PlayerbotsDatabaseTransaction pathTrans = PlayerbotsDatabase.BeginTransaction();
 
     auto flushBatch = [&]()
     {
@@ -2091,10 +2103,21 @@ void TravelNodeMap::saveNodeStore()
 
         std::string sql = ss.str();
         sql.back() = ';';  // Replace trailing comma
-        trans->Append(sql.c_str());
+        pathTrans->Append(sql.c_str());
         ss.str("");
         ss.clear();
         batchCount = 0;
+        batchesInCurrentTx++;
+    };
+
+    auto commitIfFull = [&]()
+    {
+        if (batchesInCurrentTx >= BATCHES_PER_COMMIT)
+        {
+            PlayerbotsDatabase.CommitTransaction(pathTrans);
+            pathTrans = PlayerbotsDatabase.BeginTransaction();
+            batchesInCurrentTx = 0;
+        }
     };
 
     for (uint32 i = 0; i < anodes.size(); i++)
@@ -2125,16 +2148,18 @@ void TravelNodeMap::saveNodeStore()
                 points++;
 
                 if (batchCount >= BATCH_SIZE)
+                {
                     flushBatch();
+                    commitIfFull();
+                }
             }
         }
     }
 
     flushBatch();
+    PlayerbotsDatabase.CommitTransaction(pathTrans);
 
     LOG_INFO("playerbots", ">> Saved {} travelNode Paths, {} points.", paths, points);
-
-    PlayerbotsDatabase.CommitTransaction(trans);
 }
 
 void TravelNodeMap::LoadNodeStore()
