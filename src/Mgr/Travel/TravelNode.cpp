@@ -232,6 +232,13 @@ TravelNodePath* TravelNode::BuildPath(TravelNode* endNode, Unit* bot, bool postP
     if (canPath && path.size() == 2 && getPosition()->distance(endNode->getPosition()) > 5.0f)
         canPath = false;
 
+    // Reject long final segments. If the last waypoint is >75y from
+    // the second-to-last, the chained probe stalled mid-route and
+    // mmap "teleported" to the destination as the final waypoint —
+    // the bot would air-walk that jump. Path is not a valid route.
+    if (canPath && path.size() >= 2 && path[path.size() - 2].distance(&path.back()) > 75.0f)
+        canPath = false;
+
     // Reject too-short or too-steep results — geometry shortcut that
     // mmap returns but a player can't actually walk.
     if (canPath && TravelPath::IsPathCheating(path, getPosition()->distance(endNode->getPosition())))
