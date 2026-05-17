@@ -852,18 +852,6 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
 
     PathGenerator path(pathUnit);
 
-    // Non-progress detection: track best distance-to-target seen so
-    // far. Bail only after many consecutive iterations with no
-    // meaningful improvement — the chained probe can legitimately
-    // zigzag (especially on dense vertical-stacked polys like spiral
-    // ramps) so we want a generous threshold to avoid false positives.
-    // Trigger fires only when stuck for ~10 iterations in a navmesh
-    // pocket where no step gets us 1y closer to the target.
-    float bestDistToTarget = std::numeric_limits<float>::max();
-    uint32 iterSinceImprovement = 0;
-    constexpr uint32 MAX_ITER_NO_IMPROVEMENT = 10;
-    constexpr float MIN_IMPROVEMENT = 1.0f;
-
     // Limit the pathfinding attempts
     for (uint32 i = 0; i < maxAttempt; i++)
     {
@@ -882,17 +870,6 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
 
         if (isPathTo(subPath))
             break;
-
-        float distNow = this->distance(&subPath.back());
-        if (distNow < bestDistToTarget - MIN_IMPROVEMENT)
-        {
-            bestDistToTarget = distNow;
-            iterSinceImprovement = 0;
-        }
-        else if (++iterSinceImprovement >= MAX_ITER_NO_IMPROVEMENT)
-        {
-            break;
-        }
 
         currentPos = subPath.back();
     }
