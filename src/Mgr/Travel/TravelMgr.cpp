@@ -752,6 +752,14 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
 
     std::vector<WorldPosition> retvec = fromPointsArray(points);
 
+    // PathGenerator can also return PATHFIND_NORMAL with just two
+    // points (start + end) as a fallback when polygon search fails
+    // partway through — effectively a teleport across whatever lies
+    // between. Reject long 2-point segments to avoid the chained
+    // probe accepting a 1000y+ "shortcut" as a valid path step.
+    if (retvec.size() == 2 && retvec.front().distance(&retvec.back()) > 50.0f)
+        return {};
+
     // Underwater path-extension. When PATHFIND_INCOMPLETE ends within
     // 50y of dest and both endpoints are underwater with LOS, extend
     // by one 5y step (or straight to dest if <5y). Lets bots traverse
