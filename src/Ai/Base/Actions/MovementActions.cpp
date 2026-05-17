@@ -180,11 +180,11 @@ void MovementAction::EmitDebugMove(char const* method, char const* generator, fl
 
     float dis = bot->GetExactDist(x, y, z);
     std::ostringstream out;
-    out << "[MOVE] meth=" << method
-        << " | via=" << (generator && *generator ? generator : "-")
-        << " | rpg=" << statusName
-        << " | d=" << dis << "y"
-        << " | targ=" << (targetName.empty() ? "-" : targetName.c_str());
+    out << "[M] | " << method
+        << " | " << (generator && *generator ? generator : "-")
+        << " | " << statusName
+        << " | " << std::fixed << std::setprecision(2) << dis << " yard"
+        << " | " << (targetName.empty() ? "-" : targetName.c_str());
     if (extra && *extra)
         out << " | " << extra;
     botAI->TellMasterNoFacing(out);
