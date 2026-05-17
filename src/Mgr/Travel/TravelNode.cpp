@@ -2018,69 +2018,95 @@ void TravelNodeMap::saveNodeStore()
 
     hasToSave = false;
 
-    // Phase 1: deletes + nodes + links in a single transaction. ~4400
-    // nodes + ~18000 links = ~22000 prepared statements, comfortably
-    // within MySQL transaction limits.
-    PlayerbotsDatabaseTransaction trans = PlayerbotsDatabase.BeginTransaction();
+    constexpr uint32 STMTS_PER_TX = 500;  // bounded transaction size
 
-    trans->Append(PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_DEL_TRAVELNODE));
-    trans->Append(PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_DEL_TRAVELNODE_LINK));
-    trans->Append(PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_DEL_TRAVELNODE_PATH));
+    // Phase 1: deletes in their own transaction.
+    {
+        PlayerbotsDatabaseTransaction delTrans = PlayerbotsDatabase.BeginTransaction();
+        delTrans->Append(PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_DEL_TRAVELNODE));
+        delTrans->Append(PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_DEL_TRAVELNODE_LINK));
+        delTrans->Append(PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_DEL_TRAVELNODE_PATH));
+        PlayerbotsDatabase.CommitTransaction(delTrans);
+    }
 
     std::unordered_map<TravelNode*, uint32> saveNodes;
     std::vector<TravelNode*> anodes = TravelNodeMap::instance().getNodes();
 
-    for (uint32 i = 0; i < anodes.size(); i++)
+    // Phase 2: node inserts, chunked at STMTS_PER_TX per transaction.
     {
-        TravelNode* node = anodes[i];
+        PlayerbotsDatabaseTransaction nodeTrans = PlayerbotsDatabase.BeginTransaction();
+        uint32 inTx = 0;
+        for (uint32 i = 0; i < anodes.size(); i++)
+        {
+            TravelNode* node = anodes[i];
 
-        std::string name = node->getName();
-        name.erase(remove(name.begin(), name.end(), '\''), name.end());
+            std::string name = node->getName();
+            name.erase(remove(name.begin(), name.end(), '\''), name.end());
 
-        PlayerbotsDatabasePreparedStatement* stmt = PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_INS_TRAVELNODE);
-        stmt->SetData(0, i);
-        stmt->SetData(1, name);
-        stmt->SetData(2, node->GetMapId());
-        stmt->SetData(3, node->getX());
-        stmt->SetData(4, node->getY());
-        stmt->SetData(5, node->getZ());
-        stmt->SetData(6, node->isLinked());
-        trans->Append(stmt);
+            PlayerbotsDatabasePreparedStatement* stmt = PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_INS_TRAVELNODE);
+            stmt->SetData(0, i);
+            stmt->SetData(1, name);
+            stmt->SetData(2, node->GetMapId());
+            stmt->SetData(3, node->getX());
+            stmt->SetData(4, node->getY());
+            stmt->SetData(5, node->getZ());
+            stmt->SetData(6, node->isLinked());
+            nodeTrans->Append(stmt);
 
-        saveNodes.insert(std::make_pair(node, i));
+            saveNodes.insert(std::make_pair(node, i));
+
+            if (++inTx >= STMTS_PER_TX)
+            {
+                PlayerbotsDatabase.CommitTransaction(nodeTrans);
+                nodeTrans = PlayerbotsDatabase.BeginTransaction();
+                inTx = 0;
+            }
+        }
+        PlayerbotsDatabase.CommitTransaction(nodeTrans);
     }
 
     LOG_INFO("playerbots", ">> Saved {} travelNodes.", anodes.size());
 
+    // Phase 3: link inserts, chunked at STMTS_PER_TX per transaction.
     uint32 paths = 0;
-    for (uint32 i = 0; i < anodes.size(); i++)
     {
-        TravelNode* node = anodes[i];
-
-        for (auto& link : *node->getLinks())
+        PlayerbotsDatabaseTransaction linkTrans = PlayerbotsDatabase.BeginTransaction();
+        uint32 inTx = 0;
+        for (uint32 i = 0; i < anodes.size(); i++)
         {
-            TravelNodePath* path = link.second;
+            TravelNode* node = anodes[i];
 
-            PlayerbotsDatabasePreparedStatement* stmt =
-                PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_INS_TRAVELNODE_LINK);
-            stmt->SetData(0, i);
-            stmt->SetData(1, saveNodes.find(link.first)->second);
-            stmt->SetData(2, static_cast<uint8>(path->getPathType()));
-            stmt->SetData(3, path->getPathObject());
-            stmt->SetData(4, path->getDistance());
-            stmt->SetData(5, path->getSwimDistance());
-            stmt->SetData(6, path->getExtraCost());
-            stmt->SetData(7, path->getCalculated());
-            stmt->SetData(8, path->getMaxLevelCreature()[0]);
-            stmt->SetData(9, path->getMaxLevelCreature()[1]);
-            stmt->SetData(10, path->getMaxLevelCreature()[2]);
-            trans->Append(stmt);
+            for (auto& link : *node->getLinks())
+            {
+                TravelNodePath* path = link.second;
 
-            paths++;
+                PlayerbotsDatabasePreparedStatement* stmt =
+                    PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_INS_TRAVELNODE_LINK);
+                stmt->SetData(0, i);
+                stmt->SetData(1, saveNodes.find(link.first)->second);
+                stmt->SetData(2, static_cast<uint8>(path->getPathType()));
+                stmt->SetData(3, path->getPathObject());
+                stmt->SetData(4, path->getDistance());
+                stmt->SetData(5, path->getSwimDistance());
+                stmt->SetData(6, path->getExtraCost());
+                stmt->SetData(7, path->getCalculated());
+                stmt->SetData(8, path->getMaxLevelCreature()[0]);
+                stmt->SetData(9, path->getMaxLevelCreature()[1]);
+                stmt->SetData(10, path->getMaxLevelCreature()[2]);
+                linkTrans->Append(stmt);
+
+                paths++;
+
+                if (++inTx >= STMTS_PER_TX)
+                {
+                    PlayerbotsDatabase.CommitTransaction(linkTrans);
+                    linkTrans = PlayerbotsDatabase.BeginTransaction();
+                    inTx = 0;
+                }
+            }
         }
+        PlayerbotsDatabase.CommitTransaction(linkTrans);
     }
-
-    PlayerbotsDatabase.CommitTransaction(trans);
 
     // Phase 2: path points in chunked transactions. Previously all
     // ~1.5M point inserts went into a single mega-transaction which
