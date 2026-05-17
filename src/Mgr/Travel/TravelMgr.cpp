@@ -757,7 +757,8 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     // partway through — effectively a teleport across whatever lies
     // between. Reject long 2-point segments to avoid the chained
     // probe accepting a 1000y+ "shortcut" as a valid path step.
-    if (retvec.size() == 2 && retvec.front().distance(&retvec.back()) > 50.0f)
+    // 75y matches the nodeFirstDis travelnode threshold elsewhere.
+    if (retvec.size() == 2 && retvec.front().distance(&retvec.back()) > 75.0f)
         return {};
 
     // Underwater path-extension. When PATHFIND_INCOMPLETE ends within
