@@ -226,44 +226,45 @@ TravelNodePath* TravelNode::BuildPath(TravelNode* endNode, Unit* bot, bool postP
 
     bool canPath = endPos->isPathTo(path);  // Check if we reached our destination.
 
-    // Reject long final segments. Catches both BuildShortcut 2-point
-    // teleports (start → end straight line) and chained-probe stalls
-    // where mmap "teleported" to the destination as the final waypoint
-    // after the chain dead-ended. Bot would air-walk that jump.
-    if (canPath && path.size() >= 2 && path[path.size() - 2].distance(&path.back()) > 75.0f)
-        canPath = false;
-
     // Reject too-short or too-steep results — geometry shortcut that
     // mmap returns but a player can't actually walk.
     if (canPath && TravelPath::IsPathCheating(path, getPosition()->distance(endNode->getPosition())))
         canPath = false;
 
-    if (!canPath && endNode->hasLinkTo(this))  // Unable to find a path? See if the reverse is possible.
+    // Persist the partial forward attempt before we try the reverse —
+    // the recursive endNode->BuildPath below may itself check our state.
+    returnNodePath->setPath(path);
+    returnNodePath->setComplete(canPath);
+
+    // Ensure the reverse path exists, recursively building it if needed.
+    // The recursion is bounded: BuildPath returns immediately when the
+    // reverse path is already marked complete.
+    TravelNodePath* backNodePath = nullptr;
+    if (!endNode->hasPathTo(this))
+        backNodePath = endNode->BuildPath(this, bot, postProcess);
+    else
+        backNodePath = endNode->getPathTo(this);
+
+    // Forward attempt failed — try to salvage with the reverse:
+    //   * if the reverse is complete, flip it and use it
+    //   * if the reverse is also partial but the two partials end near
+    //     each other (<5y), stitch them into one path
+    if (!canPath && backNodePath)
     {
-        TravelNodePath backNodePath = *endNode->getPathTo(this);
-
-        if (backNodePath.getPathType() == TravelNodePathType::walk)
+        std::vector<WorldPosition> backPath = backNodePath->GetPath();
+        if (!backPath.empty())
         {
-            std::vector<WorldPosition> bPath = backNodePath.GetPath();
-
-            if (!backNodePath.getComplete())  // Build it if it's not already complete.
+            if (backNodePath->getComplete())
             {
-                if (bPath.empty())
-                    bPath = {*endNode->getPosition()};  // Start the path from the end Node.
-
-                WorldPosition* thisPos = getPosition();  // Build the path to this Node.
-
-                bPath = thisPos->getPathFromPath(bPath, bot);  // Pathfind from the existing path to the this Node.
-
-                canPath = thisPos->isPathTo(bPath);  // Check if we reached our destination.
-            }
-            else
+                std::reverse(backPath.begin(), backPath.end());
+                path = backPath;
                 canPath = true;
-
-            if (canPath)
+            }
+            else if (!path.empty() && path.back().distance(&backPath.back()) < 5.0f)
             {
-                std::reverse(bPath.begin(), bPath.end());
-                path = bPath;
+                std::reverse(backPath.begin(), backPath.end());
+                path.insert(path.end(), backPath.begin(), backPath.end());
+                canPath = true;
             }
         }
     }
