@@ -226,6 +226,27 @@ TravelNodePath* TravelNode::BuildPath(TravelNode* endNode, Unit* bot, bool postP
 
     bool canPath = endPos->isPathTo(path);  // Check if we reached our destination.
 
+    // Walk → portal/transport cheat: forward stalled but we got within
+    // 20y of the dest. Add a midpoint waypoint (if the gap is >1y) plus
+    // the endpoint and accept. Must run before the IsPathCheating 2-point
+    // reject so the appended points lift size above 2.
+    if (!canPath && !isTransport() && !isPortal() &&
+        (endNode->isPortal() || endNode->isTransport()))
+    {
+        if (endPos->isPathTo(path, 20.0f))
+        {
+            if (path.back().distance(endPos) > 1.0f)
+            {
+                float mx = (endPos->GetPositionX() + path.back().GetPositionX()) * 0.5f;
+                float my = (endPos->GetPositionY() + path.back().GetPositionY()) * 0.5f;
+                float mz = (endPos->GetPositionZ() + path.back().GetPositionZ()) * 0.5f;
+                path.emplace_back(endPos->GetMapId(), mx, my, mz);
+            }
+            path.push_back(*endPos);
+            canPath = true;
+        }
+    }
+
     // Reject too-short or too-steep results — geometry shortcut that
     // mmap returns but a player can't actually walk.
     if (canPath && TravelPath::IsPathCheating(path, getPosition()->distance(endNode->getPosition())))
@@ -265,35 +286,6 @@ TravelNodePath* TravelNode::BuildPath(TravelNode* endNode, Unit* bot, bool postP
                 std::reverse(backPath.begin(), backPath.end());
                 path.insert(path.end(), backPath.begin(), backPath.end());
                 canPath = true;
-            }
-        }
-    }
-
-    // Transports are (probably?) not solid at this moment. We need to walk over them so we need extra code for this.
-    // Some portals are 'too' solid so we can't properly walk in them. Again we need to bypass this.
-    if (!isTransport() && !isPortal() && (endNode->isPortal() || endNode->isTransport()))
-    {
-        if (endNode->isTransport() && path.back().isInWater())  // Do not swim to boats.
-            canPath = false;
-        else if (!canPath && endPos->isPathTo(path, 20.0f))  // Cheat a little for transports and portals.
-        {
-            path.push_back(*endPos);
-            canPath = true;
-
-            if (!endNode->hasPathTo(this) || !endNode->getPathTo(this)->getComplete())
-            {
-                std::vector<WorldPosition> reversePath = path;
-                std::reverse(reversePath.begin(), reversePath.end());
-
-                TravelNodePath* backNodePath = endNode->setPathTo(this, TravelNodePath(), false);
-
-                backNodePath->setComplete(canPath);
-
-                endNode->setLinkTo(this, true);
-
-                backNodePath->setPath(reversePath);
-
-                backNodePath->calculateCost(!postProcess);
             }
         }
     }
