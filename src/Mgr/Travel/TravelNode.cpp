@@ -1772,6 +1772,13 @@ void TravelNodeMap::generateTaxiPaths()
         TravelNodePath travelPath(0.1f, totalTime, (uint8)TravelNodePathType::flightPath, i, true);
         travelPath.setPath(ppath);
 
+        // Preserve existing walk paths — taxi-position lookup can resolve to
+        // a non-FM node (innkeeper, subzone), and overwriting its walk path
+        // with a flight path makes the walkable connection disappear.
+        if (startNode->hasPathTo(endNode) &&
+            startNode->getPathTo(endNode)->getPathType() == TravelNodePathType::walk)
+            continue;
+
         startNode->setPathTo(endNode, travelPath);
     }
 }
