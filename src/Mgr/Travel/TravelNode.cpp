@@ -2211,7 +2211,7 @@ void TravelNodeMap::LoadNodeStore()
 
                 TravelNode* node = addNode(WorldPosition(fields[2].Get<uint32>(), fields[3].Get<float>(),
                                                          fields[4].Get<float>(), fields[5].Get<float>()),
-                                           fields[1].Get<std::string>(), true);
+                                           fields[1].Get<std::string>(), true, false);
 
                 if (fields[6].Get<bool>())
                     node->setLinked(true);
