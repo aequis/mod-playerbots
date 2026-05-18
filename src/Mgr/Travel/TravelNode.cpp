@@ -2193,6 +2193,9 @@ void TravelNodeMap::saveNodeStore()
     PlayerbotsDatabase.CommitTransaction(pathTrans);
 
     LOG_INFO("playerbots", ">> Saved {} travelNode Paths, {} points.", paths, points);
+    LOG_INFO("playerbots",
+             ">> NOTE: writes are queued ASYNC. Run '.server shutdown 1' to flush "
+             "the queue; killing the process now will lose pending rows.");
 }
 
 void TravelNodeMap::LoadNodeStore()
