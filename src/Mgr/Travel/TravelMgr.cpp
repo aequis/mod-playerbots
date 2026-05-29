@@ -727,7 +727,7 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
     // Bias against water polys so A* prefers shore routes. Matches the
     // runtime bot-Player filter setup in CreateFilter.
-    path.SetAreaCost(NAV_WATER, 10.0f);
+    path.SetNavTerrainCost(NAV_WATER, 10.0f);
     auto result = getPathStepFrom(startPos, path);
 
     if (tempCreature)
@@ -866,7 +866,7 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
     path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
     // Bias against water polys so A* prefers shore routes (matches the
     // runtime bot filter set up in CreateFilter for Player bots).
-    path.SetAreaCost(NAV_WATER, 10.0f);
+    path.SetNavTerrainCost(NAV_WATER, 10.0f);
 
     // Limit the pathfinding attempts
     for (uint32 i = 0; i < maxAttempt; i++)

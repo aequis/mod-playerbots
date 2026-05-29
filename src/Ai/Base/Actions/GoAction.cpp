@@ -125,7 +125,7 @@ bool GoAction::Execute(Event event)
         {
             PathGenerator path(bot);
             path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
-            path.SetAreaCost(NAV_WATER, 10.0f);
+            path.SetNavTerrainCost(NAV_WATER, 10.0f);
 
             path.CalculatePath(x, y, z, false);
 

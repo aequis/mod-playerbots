@@ -1253,7 +1253,7 @@ TravelNodeRoute TravelNodeMap::FindRouteNearestNodes(WorldPosition startPos, Wor
             {
                 PathGenerator path(bot);
                 path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
-                path.SetAreaCost(NAV_WATER, 10.0f);
+                path.SetNavTerrainCost(NAV_WATER, 10.0f);
                 path.CalculatePath(startNodePosition.GetPositionX(), startNodePosition.GetPositionY(), startNodePosition.GetPositionZ());
                 PathType type = path.GetPathType();
                 bool reachable = !(type & ~(PATHFIND_NORMAL | PATHFIND_INCOMPLETE | PATHFIND_FARFROMPOLY));
