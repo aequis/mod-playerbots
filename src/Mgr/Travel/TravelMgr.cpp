@@ -719,6 +719,12 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     }
 
     PathGenerator path(pathUnit);
+    // Apply bot-style filter even when source is a temp Creature so
+    // generation-time paths match what bots can actually walk at
+    // runtime. Without this, the temp-Creature branch of CreateFilter
+    // leaves NAV_GROUND_STEEP included → generator produces walk
+    // segments through 50-60° slopes that runtime bots can't traverse.
+    path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
     auto result = getPathStepFrom(startPos, path);
 
     if (tempCreature)
@@ -851,6 +857,10 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
     }
 
     PathGenerator path(pathUnit);
+    // Same reason as in getPathStepFrom: ensure NAV_GROUND_STEEP is
+    // excluded for the temp-Creature path so generation matches
+    // runtime bot filter.
+    path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
 
     // Limit the pathfinding attempts
     for (uint32 i = 0; i < maxAttempt; i++)
