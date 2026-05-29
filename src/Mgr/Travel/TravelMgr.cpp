@@ -725,6 +725,9 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     // leaves NAV_GROUND_STEEP included → generator produces walk
     // segments through 50-60° slopes that runtime bots can't traverse.
     path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
+    // Bias against water polys so A* prefers shore routes. Matches the
+    // runtime bot-Player filter setup in CreateFilter.
+    path.SetAreaCost(NAV_WATER, 10.0f);
     auto result = getPathStepFrom(startPos, path);
 
     if (tempCreature)
@@ -861,6 +864,9 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
     // excluded for the temp-Creature path so generation matches
     // runtime bot filter.
     path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
+    // Bias against water polys so A* prefers shore routes (matches the
+    // runtime bot filter set up in CreateFilter for Player bots).
+    path.SetAreaCost(NAV_WATER, 10.0f);
 
     // Limit the pathfinding attempts
     for (uint32 i = 0; i < maxAttempt; i++)
