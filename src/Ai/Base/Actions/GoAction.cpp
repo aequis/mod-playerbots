@@ -124,9 +124,6 @@ bool GoAction::Execute(Event event)
         if (botAI->HasStrategy("debug move", BOT_STATE_NON_COMBAT))
         {
             PathGenerator path(bot);
-            path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
-            path.SetNavTerrainCost(NAV_WATER, 10.0f);
-
             path.CalculatePath(x, y, z, false);
 
             Movement::Vector3 end = path.GetEndPosition();

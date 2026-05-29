@@ -719,14 +719,10 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     }
 
     PathGenerator path(pathUnit);
-    // Apply bot-style filter even when source is a temp Creature so
-    // generation-time paths match what bots can actually walk at
-    // runtime. Without this, the temp-Creature branch of CreateFilter
-    // leaves NAV_GROUND_STEEP included → generator produces walk
-    // segments through 50-60° slopes that runtime bots can't traverse.
-    path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
-    // Bias against water polys so A* prefers shore routes. Matches the
-    // runtime bot-Player filter setup in CreateFilter.
+    // Source is a temp Creature, so CreateFilter's bot block doesn't
+    // fire — apply the same bot rules here so generated paths match
+    // what bots can actually walk at runtime.
+    path.SetExcludeFlags(NAV_GROUND_STEEP);
     path.SetNavTerrainCost(NAV_WATER, 10.0f);
     auto result = getPathStepFrom(startPos, path);
 
@@ -860,12 +856,9 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
     }
 
     PathGenerator path(pathUnit);
-    // Same reason as in getPathStepFrom: ensure NAV_GROUND_STEEP is
-    // excluded for the temp-Creature path so generation matches
-    // runtime bot filter.
-    path.SetExcludeFlags(path.GetExcludeFlags() | NAV_GROUND_STEEP);
-    // Bias against water polys so A* prefers shore routes (matches the
-    // runtime bot filter set up in CreateFilter for Player bots).
+    // Same reason as getPathStepFrom: temp-Creature source doesn't trip
+    // CreateFilter's bot block, so apply the bot rules manually.
+    path.SetExcludeFlags(NAV_GROUND_STEEP);
     path.SetNavTerrainCost(NAV_WATER, 10.0f);
 
     // Limit the pathfinding attempts
