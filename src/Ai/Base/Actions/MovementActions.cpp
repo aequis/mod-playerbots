@@ -3146,9 +3146,8 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
 
     G3D::Vector3 const& last = state.walkPoints.back();
 
-    // Update LastMovement so MoveFarTo's spline-active early-out
-    // knows about this in-flight walk and won't recompute the path
-    // mid-spline. Mirror what MoveTo does after dispatching a spline.
+    // Mirror what MoveTo does after dispatching a spline so the
+    // lastPath cache below picks up the in-flight waypoint chain.
     {
         float delay = static_cast<float>(state.expectedDuration);
         delay = std::min(delay, static_cast<float>(sPlayerbotAIConfig.maxWaitForMove));

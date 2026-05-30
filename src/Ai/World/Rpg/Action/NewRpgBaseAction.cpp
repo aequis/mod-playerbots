@@ -48,7 +48,19 @@
 bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
 {
     if (dest == WorldPosition())
+    {
+        EmitDebugMove("MoveFar", "empty-dest", 0.0f, 0.0f, 0.0f);
         return false;
+    }
+
+    UpdateMovementState();
+
+    if (!IsMovingAllowed())
+    {
+        EmitDebugMove("MoveFar", "cant-move",
+                      dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
+        return false;
+    }
 
     // Already-at-dest short-stop. Below targetPosRecalcDistance the
     // move is effectively done — stop any active spline and clear
@@ -64,23 +76,9 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
                 lastMove.clear();
             }
             bot->StopMoving();
+            EmitDebugMove("MoveFar", "arrived",
+                          dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
             return false;
-        }
-    }
-
-    // Let an in-flight spline finish before recomputing — prevents
-    // oscillation when re-resolve produces a slightly different endpoint.
-    {
-        LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
-        if (bot->isMoving() && lastMove.lastMoveToMapId == bot->GetMapId())
-        {
-            float remaining = bot->GetExactDist(lastMove.lastMoveToX, lastMove.lastMoveToY, lastMove.lastMoveToZ);
-            if (remaining > 10.0f)
-            {
-                EmitDebugMove("MoveFar", "spline-plan",
-                              lastMove.lastMoveToX, lastMove.lastMoveToY, lastMove.lastMoveToZ);
-                return true;
-            }
         }
     }
 
@@ -240,7 +238,11 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     // the bot's STEEP/water filter is honored via CreateFilter. If even
     // that fails, the engine falls back to a direct spline.
     if (bot->GetMapId() != dest.GetMapId())
+    {
+        EmitDebugMove("MoveFar", "cross-map",
+                      dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
         return false;
+    }
 
     char const* reason = (probe.empty() || probe.size() < 2) ? "mmap-empty" : "mmap-noprogress";
     EmitDebugMove("MoveFar", reason,
