@@ -3508,6 +3508,141 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
             return true;
         }
 
+        case PathNodeType::NODE_AREA_TRIGGER:
+        {
+            // Pair: trigger (pointIdx) + dest (pointIdx+1).
+            // Bot walks into the area trigger volume; server teleports
+            // on entry. Bot may need quest/key prereqs to actually cross.
+            if (state.stepIdx + 1 >= state.steps.size())
+            {
+                state.Reset();
+                return false;
+            }
+
+            const PathNodePoint& trigger = state.steps[state.stepIdx];
+            const PathNodePoint& dst = state.steps[state.stepIdx + 1];
+
+            // Already on destination map — trigger fired, advance.
+            if (bot->GetMapId() == dst.point.GetMapId())
+            {
+                state.stepIdx += 2;
+                return true;
+            }
+
+            // Walk to the trigger position; collision with the trigger
+            // volume teleports us.
+            float dist = bot->GetExactDist(trigger.point.GetPositionX(),
+                                           trigger.point.GetPositionY(),
+                                           trigger.point.GetPositionZ());
+            if (dist > INTERACTION_DISTANCE)
+                return MoveTo(trigger.point.GetMapId(),
+                              trigger.point.GetPositionX(),
+                              trigger.point.GetPositionY(),
+                              trigger.point.GetPositionZ());
+
+            // At trigger but didn't teleport — likely missing quest/key.
+            // Abort; the do-quest yield-to-grind multiplier or next
+            // POI pick can reroute.
+            state.Reset();
+            return false;
+        }
+
+        case PathNodeType::NODE_STATIC_PORTAL:
+        {
+            // Pair: portal-GO position (pointIdx) + dest (pointIdx+1).
+            // Bot walks within interact range of the portal GameObject
+            // and sends CMSG_GAMEOBJ_USE to trigger its teleport spell.
+            if (state.stepIdx + 1 >= state.steps.size())
+            {
+                state.Reset();
+                return false;
+            }
+
+            const PathNodePoint& portal = state.steps[state.stepIdx];
+            const PathNodePoint& dst = state.steps[state.stepIdx + 1];
+
+            if (bot->GetMapId() == dst.point.GetMapId())
+            {
+                state.stepIdx += 2;
+                return true;
+            }
+
+            // Walk to portal GO position
+            float dist = bot->GetExactDist(portal.point.GetPositionX(),
+                                           portal.point.GetPositionY(),
+                                           portal.point.GetPositionZ());
+            if (dist > INTERACTION_DISTANCE)
+                return MoveTo(portal.point.GetMapId(),
+                              portal.point.GetPositionX(),
+                              portal.point.GetPositionY(),
+                              portal.point.GetPositionZ());
+
+            // In range — find the portal GameObject and interact
+            if (!portal.entry)
+            {
+                state.Reset();
+                return false;
+            }
+
+            if (bot->IsMounted())
+                bot->Dismount();
+            botAI->RemoveShapeshift();
+
+            GuidVector nearGOs = AI_VALUE(GuidVector, "nearest game objects");
+            for (ObjectGuid const& guid : nearGOs)
+            {
+                GameObject* go = botAI->GetGameObject(guid);
+                if (!go || go->GetEntry() != portal.entry)
+                    continue;
+                if (!bot->GetGameObjectIfCanInteractWith(guid, MAX_GAMEOBJECT_TYPE))
+                    continue;
+
+                WorldPacket packet(CMSG_GAMEOBJ_USE);
+                packet << guid;
+                bot->GetSession()->QueuePacket(new WorldPacket(packet));
+                return true;
+            }
+
+            // GO not found nearby — abort and let next tick try again
+            state.Reset();
+            return false;
+        }
+
+        case PathNodeType::NODE_TELEPORT:
+        {
+            // Teleport-spell node: hearthstone (spell 8690) or class
+            // teleport spells (mage/druid). `entry` holds the spell ID.
+            uint32 spellId = pt.entry;
+            if (!spellId)
+            {
+                state.Reset();
+                return false;
+            }
+
+            if (bot->IsInFlight() || bot->IsNonMeleeSpellCast(false))
+                return true;  // wait
+
+            if (bot->IsMounted())
+                bot->Dismount();
+            botAI->RemoveShapeshift();
+
+            bool cast = false;
+            if (spellId == 8690)
+                cast = botAI->DoSpecificAction("hearthstone", Event(), true);
+            else if (bot->HasSpell(spellId) && !bot->HasSpellCooldown(spellId))
+                cast = botAI->CastSpell(spellId, bot);
+
+            if (!cast)
+            {
+                state.Reset();
+                return false;
+            }
+
+            // Cast started — advance past the teleport step.
+            state.stepIdx++;
+            return true;
+        }
+
         case PathNodeType::NODE_TRANSPORT:
         {
             if (state.stepIdx + 1 >= state.steps.size())

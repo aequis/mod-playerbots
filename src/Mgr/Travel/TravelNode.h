@@ -90,10 +90,11 @@ enum class TravelNodePathType : uint8
 {
     none = 0,
     walk = 1,
-    // values 2 (areaTrigger), 5 (teleportSpell), 6 (staticPortal)
-    // reserved for future use — generation/execution not yet wired up.
+    areaTrigger = 2,
     transport = 3,
-    flightPath = 4
+    flightPath = 4,
+    teleportSpell = 5,
+    staticPortal = 6
 };
 
 // A connection between two nodes.
@@ -261,9 +262,14 @@ public:
         return false;
     }
 
-    // Portal-style link types (areaTrigger, staticPortal) are not
-    // generated in this PR. Stub retained so consumers compile.
-    bool isPortal() { return false; }
+    bool isPortal()
+    {
+        for (auto const& link : *getLinks())
+            if (link.second->getPathType() == TravelNodePathType::areaTrigger ||
+                link.second->getPathType() == TravelNodePathType::staticPortal)
+                return true;
+        return false;
+    }
 
     bool isWalking()
     {
@@ -405,10 +411,11 @@ enum class PathNodeType : uint8
     NODE_PREPATH = 0,
     NODE_PATH = 1,
     NODE_NODE = 2,
-    // values 3 (NODE_AREA_TRIGGER), 6 (NODE_TELEPORT), 7 (NODE_STATIC_PORTAL)
-    // reserved for future use — handlers not yet wired up.
+    NODE_AREA_TRIGGER = 3,
     NODE_TRANSPORT = 4,
-    NODE_FLIGHTPATH = 5
+    NODE_FLIGHTPATH = 5,
+    NODE_TELEPORT = 6,
+    NODE_STATIC_PORTAL = 7
 };
 
 struct PathNodePoint
@@ -662,6 +669,7 @@ public:
 
     void generateNpcNodes();
     void generateStartNodes();
+    void generateAreaTriggerNodes();
     void generateNodes();
     void generateTransportNodes();
     void generateZoneMeanNodes();

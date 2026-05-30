@@ -875,7 +875,17 @@ TravelPath TravelNodeRoute::BuildPath(std::vector<WorldPosition> pathToStart, st
                 continue;
             }
 
-            if (nodePath->getPathType() == TravelNodePathType::transport)
+            if (nodePath->getPathType() == TravelNodePathType::areaTrigger)
+            {
+                travelPath.addPoint(*prevNode->getPosition(), PathNodeType::NODE_AREA_TRIGGER, nodePath->getPathObject());
+                travelPath.addPoint(*node->getPosition(), PathNodeType::NODE_AREA_TRIGGER, nodePath->getPathObject());
+            }
+            else if (nodePath->getPathType() == TravelNodePathType::staticPortal)
+            {
+                travelPath.addPoint(*prevNode->getPosition(), PathNodeType::NODE_STATIC_PORTAL, nodePath->getPathObject());
+                travelPath.addPoint(*node->getPosition(), PathNodeType::NODE_STATIC_PORTAL, nodePath->getPathObject());
+            }
+            else if (nodePath->getPathType() == TravelNodePathType::transport)
             {
                 // Emit the transport's full waypoint route, not just board+exit.
                 // Intermediate points carry NODE_TRANSPORT type so the executor
@@ -888,6 +898,11 @@ TravelPath TravelNodeRoute::BuildPath(std::vector<WorldPosition> pathToStart, st
                 // Full taxi waypoint route; same reasoning as transport.
                 travelPath.addPath(nodePath->GetPath(), PathNodeType::NODE_FLIGHTPATH, nodePath->getPathObject());
             }
+            else if (nodePath->getPathType() == TravelNodePathType::teleportSpell)
+            {
+                travelPath.addPoint(*prevNode->getPosition(), PathNodeType::NODE_TELEPORT, nodePath->getPathObject());
+                travelPath.addPoint(*node->getPosition(), PathNodeType::NODE_TELEPORT, nodePath->getPathObject());
+            }
             else
             {
                 std::vector<WorldPosition> path = nodePath->GetPath();
@@ -895,6 +910,11 @@ TravelPath TravelNodeRoute::BuildPath(std::vector<WorldPosition> pathToStart, st
                 if (path.size() > 1 &&
                     node != nodes.back())  // Remove the last point since that will also be the start of the next path.
                     path.pop_back();
+
+                if (path.size() > 1 && prevNode->isPortal() &&
+                    nodePath->getPathType() != TravelNodePathType::areaTrigger &&
+                    nodePath->getPathType() != TravelNodePathType::staticPortal)
+                    path.erase(path.begin());
 
                 if (path.size() > 1 && prevNode->isTransport() &&
                     nodePath->getPathType() != TravelNodePathType::transport)
@@ -1558,6 +1578,63 @@ void TravelNodeMap::generateStartNodes()
     }
 }
 
+void TravelNodeMap::generateAreaTriggerNodes()
+{
+    // Entrance nodes
+    for (auto const& itr : sObjectMgr->GetAllAreaTriggerTeleports())
+    {
+        AreaTriggerTeleport const& atEntry = itr.second;
+        AreaTrigger const* at = sObjectMgr->GetAreaTrigger(itr.first);
+        if (!at)
+            continue;
+
+        WorldPosition inPos = WorldPosition(at->map, at->x, at->y, at->z, at->orientation);
+        WorldPosition outPos = WorldPosition(atEntry.target_mapId, atEntry.target_X, atEntry.target_Y, atEntry.target_Z,
+                                             atEntry.target_Orientation);
+
+        std::string nodeName;
+        if (!outPos.isOverworld())
+            nodeName = outPos.getAreaName(false) + " entrance";
+        else if (!inPos.isOverworld())
+            nodeName = inPos.getAreaName(false) + " exit";
+        else
+            nodeName = inPos.getAreaName(false) + " portal";
+
+        TravelNodeMap::instance().addNode(inPos, nodeName, true, true);
+    }
+
+    // Exit nodes + area-trigger link
+    for (auto const& itr : sObjectMgr->GetAllAreaTriggerTeleports())
+    {
+        AreaTriggerTeleport const& atEntry = itr.second;
+        AreaTrigger const* at = sObjectMgr->GetAreaTrigger(itr.first);
+        if (!at)
+            continue;
+
+        WorldPosition inPos = WorldPosition(at->map, at->x, at->y, at->z, at->orientation);
+        WorldPosition outPos = WorldPosition(atEntry.target_mapId, atEntry.target_X, atEntry.target_Y, atEntry.target_Z,
+                                             atEntry.target_Orientation);
+
+        std::string nodeName;
+        if (!outPos.isOverworld())
+            nodeName = outPos.getAreaName(false) + " entrance";
+        else if (!inPos.isOverworld())
+            nodeName = inPos.getAreaName(false) + " exit";
+        else
+            nodeName = inPos.getAreaName(false) + " portal";
+
+        TravelNode* outNode = TravelNodeMap::instance().addNode(outPos, nodeName, true, true);
+        TravelNode* inNode = TravelNodeMap::instance().getNode(inPos, nullptr, 5.0f);
+
+        if (outNode && inNode)
+        {
+            TravelNodePath travelPath(0.1f, 3.0f, (uint8)TravelNodePathType::areaTrigger, itr.first, true);
+            travelPath.setPath({*inNode->getPosition(), *outNode->getPosition()});
+            inNode->setPathTo(outNode, travelPath);
+        }
+    }
+}
+
 void TravelNodeMap::generateTransportNodes()
 {
     for (auto const& itr : *sObjectMgr->GetGameObjectTemplates())
@@ -1661,6 +1738,8 @@ void TravelNodeMap::generateNodes()
     generateStartNodes();
     LOG_INFO("playerbots", "-Generating npc nodes");
     generateNpcNodes();
+    LOG_INFO("playerbots", "-Generating area trigger nodes");
+    generateAreaTriggerNodes();
     LOG_INFO("playerbots", "-Generating transport nodes");
     generateTransportNodes();
     LOG_INFO("playerbots", "-Generating zone mean nodes");
