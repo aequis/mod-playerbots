@@ -507,6 +507,13 @@ public:
     // dispatches the matching special-movement handler on the new head.
     bool UpcommingSpecialMovement(WorldPosition startPos, float maxDist, bool onTransport);
 
+    // Truncate the path at the first waypoint that would put the bot in
+    // range of a hostile creature (within attack range, in LOS, level-cap
+    // sane), at a non-walkable hop, after drifting beyond reactDistance
+    // from the start, or across a > 125-sqDist jump. Set ignoreEnemyTargets
+    // to suppress the hostile-target check (used by combat repositioning).
+    void ClipPath(PlayerbotAI* ai, Unit* mover, bool ignoreEnemyTargets = false);
+
     // Reject paths the navmesh accepts but a player can't walk:
     // 2-point shortcut over 5y, or > 10y vertical drop with slope steeper than 2:1.
     static bool IsPathCheating(std::vector<WorldPosition> const& path,

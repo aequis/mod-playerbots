@@ -956,6 +956,75 @@ bool TravelPath::UpcommingSpecialMovement(WorldPosition startPos,
     return false;
 }
 
+void TravelPath::ClipPath(PlayerbotAI* ai, Unit* mover, bool ignoreEnemyTargets)
+{
+    auto startP = getNextPoint(WorldPosition(mover), 0.0f, false);
+    cutTo(*startP, false);
+
+    if (startP == fullPath.end())
+        return;
+
+    GuidVector targets;
+    Player* bot = ai ? ai->GetBot() : nullptr;
+    if (bot && ai->GetState() != BOT_STATE_COMBAT && !bot->isDead() && !ignoreEnemyTargets)
+        targets = AI_VALUE(GuidVector, "possible targets");
+
+    auto endP = fullPath.end();
+    auto prevP = fullPath.begin();
+    float const reactSq = sPlayerbotAIConfig.reactDistance * sPlayerbotAIConfig.reactDistance;
+
+    for (auto p = fullPath.begin(); p != fullPath.end(); ++p)
+    {
+        // Hostile-target check: stop before walking into a mob that
+        // would aggro. Level-capped (mover->level + 5) so over-level
+        // mobs we'd avoid anyway are ignored.
+        for (ObjectGuid const& targetGuid : targets)
+        {
+            if (!targetGuid.IsCreature())
+                continue;
+            Unit* unit = ai->GetUnit(targetGuid);
+            if (!unit || unit->isDead())
+                continue;
+            if (unit->GetLevel() > mover->GetLevel() + 5)
+                continue;
+            Creature* cre = unit->ToCreature();
+            if (!cre)
+                continue;
+            float const range = cre->GetAttackDistance(mover);
+            if (WorldPosition(unit).sqDistance(p->point) > range * range)
+                continue;
+            if (!unit->IsHostileTo(mover) || !unit->IsWithinLOSInMap(mover))
+                continue;
+
+            endP = p;
+            break;
+        }
+        if (endP != fullPath.end())
+            break;
+
+        // Reject paths that drift past reactDistance from the start —
+        // a sign the path looped or wandered.
+        if (p->point.sqDistance(fullPath.begin()->point) > reactSq)
+            endP = p;
+        // Non-walkable hop in the middle (portal/transport/etc.) terminates.
+        else if (!p->isWalkable())
+            endP = p;
+        // Gap between adjacent points > ~11y (sqDist 125) — likely bad data.
+        else if (p->point.sqDistance(prevP->point) > 125.0f)
+            endP = prevP;
+
+        if (endP != fullPath.end())
+            break;
+
+        prevP = p;
+    }
+
+    if (endP == fullPath.end())
+        return;
+
+    fullPath.erase(std::next(endP), fullPath.end());
+}
+
 bool TravelPath::makeShortCut(WorldPosition startPos, float maxDist, Unit* bot)
 {
     if (GetPath().empty())

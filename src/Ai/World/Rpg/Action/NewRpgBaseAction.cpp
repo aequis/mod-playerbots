@@ -125,6 +125,12 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     if (onTransport)
         return false;
 
+    // ClipPath — truncate at first hostile creature in range / non-walkable
+    // hop / drifted past reactDistance / > 125 sqDist jump.
+    path.ClipPath(botAI, bot, false);
+    if (path.empty())
+        return false;
+
     // Walk dispatch.
     std::vector<WorldPosition> const& pts = path.getPointPath();
     Movement::PointsArray points;
@@ -164,42 +170,8 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
     for (auto& pt : points)
         bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
 
-    // ClipPath — truncate path at first hostile creature within its
-    // own attack range. Skipped while in combat or dead.
-    if (botAI->GetState() != BOT_STATE_COMBAT && bot->IsAlive())
-    {
-        GuidVector targets = AI_VALUE(GuidVector, "possible targets");
-        if (!targets.empty())
-        {
-            size_t clipAt = points.size();
-            for (size_t i = 0; i < points.size() && clipAt == points.size(); ++i)
-            {
-                for (ObjectGuid const& guid : targets)
-                {
-                    Unit* unit = botAI->GetUnit(guid);
-                    if (!unit || !unit->IsAlive())
-                        continue;
-                    Creature* cre = unit->ToCreature();
-                    if (!cre)
-                        continue;
-                    if (unit->GetLevel() > bot->GetLevel() + 5)
-                        continue;
-                    float range = cre->GetAttackDistance(bot);
-                    float dx = unit->GetPositionX() - points[i].x;
-                    float dy = unit->GetPositionY() - points[i].y;
-                    float dz = unit->GetPositionZ() - points[i].z;
-                    if (dx * dx + dy * dy + dz * dz > range * range)
-                        continue;
-                    if (!unit->IsWithinLOSInMap(bot))
-                        continue;
-                    clipAt = i;
-                    break;
-                }
-            }
-            if (clipAt < points.size() && clipAt + 1 < points.size())
-                points.erase(points.begin() + clipAt + 1, points.end());
-        }
-    }
+    // ClipPath now runs at MoveFarTo level on the TravelPath before the
+    // points array is built. No per-dispatch clip here.
 
     if (points.size() < 2)
         return false;
