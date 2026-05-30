@@ -898,11 +898,6 @@ TravelPath TravelNodeRoute::BuildPath(std::vector<WorldPosition> pathToStart, st
                 // Full taxi waypoint route; same reasoning as transport.
                 travelPath.addPath(nodePath->GetPath(), PathNodeType::NODE_FLIGHTPATH, nodePath->getPathObject());
             }
-            else if (nodePath->getPathType() == TravelNodePathType::teleportSpell)
-            {
-                travelPath.addPoint(*prevNode->getPosition(), PathNodeType::NODE_TELEPORT, nodePath->getPathObject());
-                travelPath.addPoint(*node->getPosition(), PathNodeType::NODE_TELEPORT, nodePath->getPathObject());
-            }
             else
             {
                 std::vector<WorldPosition> path = nodePath->GetPath();

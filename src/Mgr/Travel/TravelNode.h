@@ -93,7 +93,9 @@ enum class TravelNodePathType : uint8
     areaTrigger = 2,
     transport = 3,
     flightPath = 4,
-    teleportSpell = 5,
+    // value 5 (teleportSpell) reserved — no generator emits it and no
+    // consumer handles it. Re-add when a teleport-spell edge generator
+    // / executor handler returns.
     staticPortal = 6
 };
 
@@ -414,7 +416,8 @@ enum class PathNodeType : uint8
     NODE_AREA_TRIGGER = 3,
     NODE_TRANSPORT = 4,
     NODE_FLIGHTPATH = 5,
-    NODE_TELEPORT = 6,
+    // value 6 (NODE_TELEPORT) reserved — no consumer; re-add when a
+    // teleport-spell handler / generator returns.
     NODE_STATIC_PORTAL = 7
 };
 
@@ -561,9 +564,7 @@ struct TravelPlan
 
     // Spline scratch (used by executor):
     std::vector<G3D::Vector3> walkPoints;
-    bool splineActive{false};
-    uint32 splineStartTime{0};
-    uint32 expectedDuration{0};
+    uint32 expectedDuration{0};  // used to derive the lastMove delay
 
     // Taxi scratch:
     std::vector<uint32> route;
@@ -576,8 +577,6 @@ struct TravelPlan
         steps.clear();
         stepIdx = 0;
         walkPoints.clear();
-        splineActive = false;
-        splineStartTime = 0;
         expectedDuration = 0;
         route.clear();
     }

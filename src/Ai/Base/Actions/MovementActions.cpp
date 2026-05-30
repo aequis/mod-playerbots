@@ -3084,51 +3084,6 @@ bool MoveAwayFromPlayerWithDebuffAction::isPossible()
     return bot->CanFreeMove();
 }
 
-bool MovementAction::CheckSplineProgress(TravelPlan& state)
-{
-    if (!state.splineActive)
-        return false;
-
-    // walkPoints may have been cleared by a map transfer or external reset
-    // while the spline was still flagged active; bail out safely.
-    if (state.walkPoints.empty())
-    {
-        state.splineActive = false;
-        return false;
-    }
-
-    if (bot->movespline->Finalized())
-    {
-        G3D::Vector3 const& endPt = state.walkPoints.back();
-        float distToEnd = bot->GetExactDist(endPt.x, endPt.y, endPt.z);
-
-        if (distToEnd < 10.0f)
-        {
-            state.splineActive = false;
-            state.walkPoints.clear();
-            return true;  // Arrived
-        }
-
-        // Spline finalized short of target — interrupted (combat/knockback/etc).
-        // Caller will re-launch.
-        state.splineActive = false;
-        return false;
-    }
-
-    // Stuck detection
-    if (state.splineStartTime &&
-        GetMSTimeDiffToNow(state.splineStartTime) > state.expectedDuration * 2 + (30 * IN_MILLISECONDS))
-    {
-        G3D::Vector3 const& endPt = state.walkPoints.back();
-        botAI->TeleportTo(WorldLocation(bot->GetMapId(), endPt.x, endPt.y, endPt.z));
-        state.splineActive = false;
-        state.walkPoints.clear();
-        return true;
-    }
-
-    return false;  // Still moving
-}
-
 bool MovementAction::LaunchWalkSpline(TravelPlan& state)
 {
     if (state.walkPoints.size() < 2)
@@ -3209,9 +3164,6 @@ bool MovementAction::LaunchWalkSpline(TravelPlan& state)
     state.expectedDuration = static_cast<uint32>((totalDist / speed) * IN_MILLISECONDS);
 
     bot->GetMotionMaster()->MoveSplinePath(&state.walkPoints, FORCED_MOVEMENT_RUN);
-
-    state.splineStartTime = getMSTime();
-    state.splineActive = true;
 
     G3D::Vector3 const& last = state.walkPoints.back();
 
@@ -3342,19 +3294,6 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
     // `teleport(reason)`) cover every actual movement decision; emitting
     // an executor-ran-this-tick label here would whisper every tick
     // while the plan is active.
-
-    // Handle active spline
-    if (state.splineActive)
-    {
-        if (!CheckSplineProgress(state))
-        {
-            if (state.splineActive)
-                return true;  // Still moving
-            else
-                LaunchWalkSpline(state);  // Interrupted, re-launch
-        }
-        return true;
-    }
 
     if (state.stepIdx >= state.steps.size())
     {
@@ -3606,41 +3545,6 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
             // GO not found nearby — abort and let next tick try again
             state.Reset();
             return false;
-        }
-
-        case PathNodeType::NODE_TELEPORT:
-        {
-            // Teleport-spell node: hearthstone (spell 8690) or class
-            // teleport spells (mage/druid). `entry` holds the spell ID.
-            uint32 spellId = pt.entry;
-            if (!spellId)
-            {
-                state.Reset();
-                return false;
-            }
-
-            if (bot->IsInFlight() || bot->IsNonMeleeSpellCast(false))
-                return true;  // wait
-
-            if (bot->IsMounted())
-                bot->Dismount();
-            botAI->RemoveShapeshift();
-
-            bool cast = false;
-            if (spellId == 8690)
-                cast = botAI->DoSpecificAction("hearthstone", Event(), true);
-            else if (bot->HasSpell(spellId) && !bot->HasSpellCooldown(spellId))
-                cast = botAI->CastSpell(spellId, bot);
-
-            if (!cast)
-            {
-                state.Reset();
-                return false;
-            }
-
-            // Cast started — advance past the teleport step.
-            state.stepIdx++;
-            return true;
         }
 
         case PathNodeType::NODE_TRANSPORT:

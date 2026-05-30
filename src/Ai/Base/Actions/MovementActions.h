@@ -104,7 +104,6 @@ protected:
 
 private:
     bool LaunchWalkSpline(TravelPlan& state);
-    bool CheckSplineProgress(TravelPlan& state);
     bool MoveToSpline(TravelPlan& state, WorldPosition target);
     // Per-segment mmap refinement of a travel-node-graph walk batch.
     // The graph stores offline-baked coords whose straight-line
