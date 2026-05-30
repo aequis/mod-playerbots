@@ -68,6 +68,12 @@ protected:
     // travel so we yield to attack-anything instead of running past.
     bool HasNearbyQuestMob(float range = 20.0f);
 
+    // Narrower variant: only yields for mobs needed by the SPECIFIC
+    // quest+objective the bot is currently working on. Without this,
+    // do-quest yields for any quest in the log, derailing turn-ins
+    // and cross-zone travel through other quests' mob clusters.
+    bool HasNearbyQuestMobForObjective(float range, uint32 questId, int32 objectiveIdx);
+
 protected:
     bool GetQuestPOIPosAndObjectiveIdx(uint32 questId, std::vector<POIInfo>& poiInfo, bool toComplete = false);
     static WorldPosition SelectRandomGrindPos(Player* bot);

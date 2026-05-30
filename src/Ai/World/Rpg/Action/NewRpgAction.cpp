@@ -331,8 +331,11 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
 
     if (bot->GetDistance(data.pos) > 10.0f && !data.lastReachPOI)
     {
-        // yield to attack-anything if a quest mob is right next to us
-        if (HasNearbyQuestMob(15.0f))
+        // Yield to attack-anything ONLY if a mob needed by this exact
+        // quest+objective is right next to us. The broad variant (any
+        // quest in the log) yielded for every nearby mob and derailed
+        // turn-ins / cross-zone travel through other quests' clusters.
+        if (HasNearbyQuestMobForObjective(15.0f, data.questId, data.objectiveIdx))
             return false;
 
         // Note: previously yielded ~10%/tick when any hostile was

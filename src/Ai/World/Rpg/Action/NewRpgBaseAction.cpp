@@ -1558,6 +1558,79 @@ bool NewRpgBaseAction::HasNearbyQuestMob(float range)
     return false;
 }
 
+bool NewRpgBaseAction::HasNearbyQuestMobForObjective(float range, uint32 questId, int32 objectiveIdx)
+{
+    if (!questId)
+        return false;
+
+    Quest const* quest = sObjectMgr->GetQuestTemplate(questId);
+    if (!quest)
+        return false;
+
+    // Turn-in path: completed quest has no remaining mob objective.
+    if (bot->GetQuestStatus(questId) == QUEST_STATUS_COMPLETE)
+        return false;
+
+    QuestStatusData const& qs = bot->getQuestStatusMap().at(questId);
+
+    uint32 neededCreatureEntry = 0;
+    uint32 neededItemId = 0;
+
+    if (objectiveIdx >= 0 && objectiveIdx < QUEST_OBJECTIVES_COUNT)
+    {
+        int32 entry = quest->RequiredNpcOrGo[objectiveIdx];
+        if (entry > 0 &&
+            qs.CreatureOrGOCount[objectiveIdx] < quest->RequiredNpcOrGoCount[objectiveIdx])
+        {
+            neededCreatureEntry = uint32(entry);
+        }
+        // Item objective sometimes lives in the same slot range.
+        if (objectiveIdx < QUEST_ITEM_OBJECTIVES_COUNT &&
+            quest->RequiredItemId[objectiveIdx] &&
+            qs.ItemCount[objectiveIdx] < quest->RequiredItemCount[objectiveIdx])
+        {
+            neededItemId = quest->RequiredItemId[objectiveIdx];
+        }
+    }
+    else if (objectiveIdx >= QUEST_OBJECTIVES_COUNT &&
+             objectiveIdx < QUEST_OBJECTIVES_COUNT + QUEST_ITEM_OBJECTIVES_COUNT)
+    {
+        int32 itemSlot = objectiveIdx - QUEST_OBJECTIVES_COUNT;
+        if (quest->RequiredItemId[itemSlot] &&
+            qs.ItemCount[itemSlot] < quest->RequiredItemCount[itemSlot])
+        {
+            neededItemId = quest->RequiredItemId[itemSlot];
+        }
+    }
+
+    if (!neededCreatureEntry && !neededItemId)
+        return false;
+
+    GuidVector possibleTargets = AI_VALUE(GuidVector, "possible targets");
+    for (ObjectGuid guid : possibleTargets)
+    {
+        Creature* c = botAI->GetCreature(guid);
+        if (!c || !c->IsInWorld() || !c->IsAlive())
+            continue;
+        if (!(c->GetPhaseMask() & bot->GetPhaseMask()))
+            continue;
+        if (bot->GetDistance(c) > range)
+            continue;
+
+        if (neededCreatureEntry && c->GetEntry() == neededCreatureEntry)
+            return true;
+
+        if (neededItemId)
+        {
+            CreatureTemplate const* tmpl = c->GetCreatureTemplate();
+            if (tmpl && tmpl->lootid &&
+                LootTemplates_Creature.HaveQuestLootForPlayer(tmpl->lootid, bot))
+                return true;
+        }
+    }
+    return false;
+}
+
 
 ObjectGuid NewRpgBaseAction::ChooseNpcOrGameObjectToInteract(bool questgiverOnly, float distanceLimit)
 {
