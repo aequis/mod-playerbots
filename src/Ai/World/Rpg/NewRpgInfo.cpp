@@ -77,7 +77,6 @@ void NewRpgInfo::Reset()
 {
     data = Idle{};
     startT = getMSTime();
-    ClearTravel();
 }
 
 NewRpgStatus NewRpgInfo::GetStatus()

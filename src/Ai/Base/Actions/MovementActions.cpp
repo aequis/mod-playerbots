@@ -3069,11 +3069,7 @@ TravelPath MovementAction::ResolveMovePath(WorldPosition const& startPos,
 
     if (needsLongPath && !sTravelNodeMap.getNodes().empty() && !bot->InBattleground())
     {
-        // Wrap the legacy TravelPlan-populating call; the steps field on
-        // TravelPlan IS a TravelPath, so extract it directly.
-        TravelPlan tmp;
-        if (sTravelNodeMap.GetFullPath(tmp, startPos, bot->GetZoneId(), endPos, bot))
-            out = tmp.steps;
+        out = sTravelNodeMap.GetFullPath(startPos, bot->GetZoneId(), endPos, bot);
     }
     else
     {

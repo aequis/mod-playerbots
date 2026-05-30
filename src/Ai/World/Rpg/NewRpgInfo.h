@@ -78,11 +78,6 @@ struct NewRpgInfo
 
     uint32 startT{0};  // start timestamp of the current status
 
-    // Travel Node System
-    TravelPlan travelPlan;
-    bool HasActiveTravelPlan() const { return travelPlan.IsActive(); }
-    void ClearTravel() { travelPlan.Reset(); }
-
     using RpgData = std::variant<
         Idle,
         GoGrind,

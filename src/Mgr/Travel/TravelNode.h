@@ -68,7 +68,9 @@
 //
 //  GetFullPath finds nearest nodes (zone-indexed), runs A* to get a node route, then
 //  BuildPath assembles a flat TravelPath with typed waypoints (walk, portal, transport, flight).
-//  ExecuteTravelPlan iterates the path by stepIdx, dispatching on each point's PathNodeType.
+//  MoveFarTo re-resolves a fresh TravelPath each tick; UpcommingSpecialMovement cuts
+//  to the head segment when special; HandleSpecialMovement dispatches the matching
+//  action (portal interact, area-trigger marker, transport board, flight taxi).
 //  Cross-map travel is handled naturally by portal/transport edges in the A* graph.
 //
 //  If setup cannot resolve (no node, no route, no flight), the bot teleports directly to the destination
@@ -585,34 +587,6 @@ public:
     uint32 currentGold = 0;
 };
 
-struct TravelPlan
-{
-    WorldPosition destination;
-
-    // Flat waypoint path built upfront by GetFullPath:
-    TravelPath steps;
-    uint32 stepIdx{0};
-
-    // Spline scratch (used by executor):
-    std::vector<G3D::Vector3> walkPoints;
-    uint32 expectedDuration{0};  // used to derive the lastMove delay
-
-    // Taxi scratch:
-    std::vector<uint32> route;
-
-    bool IsActive() const { return !steps.empty(); }
-
-    void Reset()
-    {
-        destination = WorldPosition();
-        steps.clear();
-        stepIdx = 0;
-        walkPoints.clear();
-        expectedDuration = 0;
-        route.clear();
-    }
-};
-
 // The container of all nodes.
 class TravelNodeMap
 {
@@ -742,8 +716,11 @@ public:
     // empty static vector for unknown zones.
     std::vector<TravelNode*> const& GetNodesInZone(uint32 zoneId) const;
 
-    bool GetFullPath(TravelPlan& plan, WorldPosition botPos,
-        uint32 botZoneId, WorldPosition destination, Unit* bot = nullptr);
+    // Resolve a full TravelPath from botPos to destination. Returns an
+    // empty TravelPath if no graph route + mmap stitch is reachable;
+    // the caller is then expected to fall back to a single-point path.
+    TravelPath GetFullPath(WorldPosition botPos, uint32 botZoneId,
+        WorldPosition destination, Unit* bot = nullptr);
 
     // Resolve A* route between two world positions (returns node vector)
     std::vector<TravelNode*> ResolveRoute(WorldPosition startPos,

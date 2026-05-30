@@ -1512,23 +1512,10 @@ TravelNodeRoute TravelNodeMap::FindRouteNearestNodes(WorldPosition startPos, Wor
     return TravelNodeRoute();
 }
 
-bool TravelNodeMap::GetFullPath(TravelPlan& plan,
-    WorldPosition botPos, uint32 botZoneId,
+TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos, uint32 botZoneId,
     WorldPosition destination, Unit* bot)
 {
-    // Capture previous pathToStart from the about-to-be-reset plan so we
-    // can try cropPathTo to reuse it across the per-tick re-resolve.
-    std::vector<WorldPosition> prevPathToStart;
-    for (auto const& pt : plan.steps.GetPathRef())
-    {
-        if (pt.type == PathNodeType::NODE_PREPATH)
-            prevPathToStart.push_back(pt.point);
-        else
-            break;  // PREPATH is always at the head
-    }
-
-    plan.Reset();
-    plan.destination = destination;
+    TravelPath path;
 
     // mmap-probe first: if a 40-step probe makes meaningful progress,
     // prefer it over the graph. Loosened from "reaches within spellDistance"
@@ -1556,10 +1543,10 @@ bool TravelNodeMap::GetFullPath(TravelPlan& plan,
 
             if (closeEnough || meaningfulProgress)
             {
-                plan.steps.addPoint(botPos, PathNodeType::NODE_PREPATH);
+                path.addPoint(botPos, PathNodeType::NODE_PREPATH);
                 for (size_t i = 1; i < probe.size(); ++i)
-                    plan.steps.addPoint(probe[i], PathNodeType::NODE_PATH);
-                return true;
+                    path.addPoint(probe[i], PathNodeType::NODE_PATH);
+                return path;
             }
         }
     }
@@ -1595,7 +1582,7 @@ bool TravelNodeMap::GetFullPath(TravelPlan& plan,
     std::vector<TravelNode*> endCandidates = pickKNearest(destination, destZone);
 
     if (startCandidates.empty() || endCandidates.empty())
-        return false;
+        return path;  // empty
 
     TravelNode* startNode = nullptr;
     TravelNode* endNode = nullptr;
@@ -1621,24 +1608,14 @@ bool TravelNodeMap::GetFullPath(TravelPlan& plan,
     }
 
     if (route.isEmpty() || !startNode || !endNode)
-        return false;
+        return path;  // empty
 
     WorldPosition startNodePos = *startNode->getPosition();
     WorldPosition endNodePos = *endNode->getPosition();
 
-    // pathToStart: mmap-path from bot to the first node. Try cropping
-    // the previous pathToStart first (cmangos parity) — if it still
-    // reaches the chosen startNode within reactDistance we avoid a full
-    // re-probe. Falls back to fresh getPathTo if crop fails or invalid.
+    // pathToStart: fresh mmap-path from bot to the first node.
     std::vector<WorldPosition> pathToStart;
-    if (!prevPathToStart.empty())
-    {
-        std::vector<WorldPosition> cropped = prevPathToStart;
-        bool ok = startNodePos.cropPathTo(cropped, sPlayerbotAIConfig.reactDistance);
-        if (ok && cropped.size() >= 2)
-            pathToStart = cropped;
-    }
-    if (pathToStart.empty() && bot && botPos.GetMapId() == startNodePos.GetMapId())
+    if (bot && botPos.GetMapId() == startNodePos.GetMapId())
     {
         std::vector<WorldPosition> probe = botPos.getPathTo(startNodePos, bot);
         if (probe.size() >= 2)
@@ -1663,9 +1640,9 @@ bool TravelNodeMap::GetFullPath(TravelPlan& plan,
     if (pathToEnd.empty())
         pathToEnd = {destination};
 
-    plan.steps = route.BuildPath(pathToStart, pathToEnd, nullptr);
+    path = route.BuildPath(pathToStart, pathToEnd, nullptr);
 
-    return !plan.steps.empty();
+    return path;
 }
 
 bool TravelNodeMap::cropUselessNode(TravelNode* startNode)
