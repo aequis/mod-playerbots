@@ -24,6 +24,7 @@ LastMovement::LastMovement(LastMovement& other)
     nextTeleport = other.nextTeleport;
     lastPath = other.lastPath;
     priority = other.priority;
+    lastTransportEntry = other.lastTransportEntry;
 }
 
 void LastMovement::clear()
@@ -42,6 +43,7 @@ void LastMovement::clear()
     msTime = 0;
     lastdelayTime = 0;
     priority = MovementPriority::MOVEMENT_NORMAL;
+    lastTransportEntry = 0;
 }
 
 void LastMovement::Set(Unit* follow)

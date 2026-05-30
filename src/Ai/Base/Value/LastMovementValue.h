@@ -39,6 +39,7 @@ public:
         lastPath = other.lastPath;
         nextTeleport = other.nextTeleport;
         priority = other.priority;
+        lastTransportEntry = other.lastTransportEntry;
         return *this;
     };
 
@@ -66,6 +67,10 @@ public:
     MovementPriority priority;
     TravelPath lastPath;
     time_t nextTeleport;
+    // Entry of the transport the bot is currently aboard mid-journey,
+    // used by WaitForTransport to resume a transport segment if the
+    // bot is still on it next tick (e.g. boat in motion). 0 = none.
+    uint32 lastTransportEntry{0};
     std::future<TravelPath> future;
 };
 
