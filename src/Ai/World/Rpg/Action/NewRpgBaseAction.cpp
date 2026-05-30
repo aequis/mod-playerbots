@@ -119,6 +119,12 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         // dispatches the walk into the trigger volume). Fall through.
     }
 
+    // Transport guard: bot is on a transport but no special movement
+    // applies this tick — don't dispatch a walk spline (would fight the
+    // transport's own movement).
+    if (onTransport)
+        return false;
+
     // Walk dispatch.
     std::vector<WorldPosition> const& pts = path.getPointPath();
     Movement::PointsArray points;
