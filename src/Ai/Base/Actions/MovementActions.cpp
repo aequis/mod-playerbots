@@ -3306,89 +3306,29 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
     switch (pt.type)
     {
         case PathNodeType::NODE_PREPATH:
-        {
-            if (state.stepIdx + 1 >= state.steps.size())
-            {
-                state.stepIdx++;
-                return true;
-            }
-
-            float const botX = bot->GetPositionX();
-            float const botY = bot->GetPositionY();
-            float const botZ = bot->GetPositionZ();
-
-            // Walk forward through the route while distance keeps shrinking.
-            // Once it starts growing we're past the closest waypoint — break.
-            size_t bestIdx = state.stepIdx + 1;
-            float bestDistSq = FLT_MAX;
-            for (size_t i = state.stepIdx + 1; i < state.steps.size(); ++i)
-            {
-                const PathNodePoint& cand = state.steps[i];
-                if (cand.type != PathNodeType::NODE_PATH &&
-                    cand.type != PathNodeType::NODE_NODE)
-                    break;  // stop at portal/transport/etc — can't walk past
-
-                float const dx = cand.point.GetPositionX() - botX;
-                float const dy = cand.point.GetPositionY() - botY;
-                float const dz = cand.point.GetPositionZ() - botZ;
-                float const dSq = dx * dx + dy * dy + dz * dz;
-                if (dSq >= bestDistSq)
-                    break;  // moving away — closest waypoint already found
-
-                bestDistSq = dSq;
-                bestIdx = i;
-            }
-
-            constexpr float ARRIVAL_DIST = 5.0f;
-
-            WorldPosition const& target = state.steps[bestIdx].point;
-            float const distToTarget = bot->GetExactDist(
-                target.GetPositionX(), target.GetPositionY(), target.GetPositionZ());
-
-            if (distToTarget < ARRIVAL_DIST)
-            {
-                state.stepIdx = bestIdx;
-                return true;
-            }
-
-            // Validate the path before MoveTo. PathGenerator can
-            // return NORMAL | NOT_USING_PATH when start or end poly
-            // is invalid (BuildShortcut → 2-point straight line).
-            // PointMovementGenerator would then dispatch the bot
-            // straight through any geometry between bot and target.
-            // The default accept mask (NORMAL | INCOMPLETE) rejects
-            // NOT_USING_PATH, so abort the plan and let MoveFarTo
-            // re-derive instead of walking a known-bad shortcut.
-            PathResult validate = GeneratePath(
-                target.GetPositionX(), target.GetPositionY(), target.GetPositionZ(),
-                DEFAULT_PATH_ACCEPT_MASK, false);
-            if (!validate.reachable)
-            {
-                EmitDebugMove("TravelPlan", "prepath-unreachable",
-                              target.GetPositionX(), target.GetPositionY(), target.GetPositionZ());
-                state.Reset();
-                return false;
-            }
-
-            return MoveTo(target.GetMapId(),
-                target.GetPositionX(), target.GetPositionY(), target.GetPositionZ(),
-                false, false, false, true /*exact_waypoint*/);
-        }
-
         case PathNodeType::NODE_PATH:
         case PathNodeType::NODE_NODE:
         {
-            // Batch consecutive walk points into one spline. Capped at
-            // 20 points per dispatch as a cheap upper bound on per-tick
-            // work; stepIdx advances exactly in step with what's
-            // dispatched, so the next tick picks up from the cutoff.
+            // Batch consecutive walkable points (PREPATH, PATH, NODE) into
+            // one spline. With per-tick re-resolve the plan starts at
+            // stepIdx=0 each tick, so we must dispatch a real spline (not
+            // a single-waypoint MoveTo) — otherwise the executor's
+            // "near closest waypoint" heuristic returns true without
+            // moving and the bot never advances.
+            //
+            // Capped at 20 points per dispatch as a cheap upper bound on
+            // per-tick work. The engine plays the spline; next tick
+            // re-resolves from the bot's new position and dispatches the
+            // next batch.
             static constexpr uint32 MAX_SPLINE_POINTS = 20;
             state.walkPoints.clear();
             while (state.stepIdx < state.steps.size() && state.walkPoints.size() < MAX_SPLINE_POINTS)
             {
                 const PathNodePoint& wp = state.steps[state.stepIdx];
-                if (wp.type != PathNodeType::NODE_PATH && wp.type != PathNodeType::NODE_NODE)
-                    break;
+                if (wp.type != PathNodeType::NODE_PREPATH &&
+                    wp.type != PathNodeType::NODE_PATH &&
+                    wp.type != PathNodeType::NODE_NODE)
+                    break;  // stop at portal/transport/etc — can't walk past
                 state.walkPoints.push_back(G3D::Vector3(wp.point.GetPositionX(),
                     wp.point.GetPositionY(), wp.point.GetPositionZ()));
                 state.stepIdx++;
