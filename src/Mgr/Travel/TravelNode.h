@@ -39,12 +39,11 @@
 //
 //  Edge types (TravelNodePathType):
 //    walk(1)          — Walk via navmesh waypoints (stored in DB)
-//    portal(2)        — AreaTrigger teleport (auto-discovered at startup)
+//    areaTrigger(2)   — AreaTrigger teleport (auto-discovered at startup)
 //    transport(3)     — Boat/zeppelin (auto-discovered from MO_TRANSPORT)
 //    flightPath(4)    — Taxi flight between flight masters
 //    teleportSpell(5) — Spell-based teleport (e.g. mage portals)
 //    staticPortal(6)  — Manually defined teleport link (DB only, not pruned by generation)
-//    flyingMount (7)  — Use Bots Flying mount to travel (Not currently enabled)
 //
 //  On server start saved nodes and links are loaded via TravelNodeMap::Init(). An index of nodes by zone is prepared
 //  (instead of scanning all ~4000 nodes), precomputes connected components for O(1) reachability checks, and builds
@@ -91,12 +90,10 @@ enum class TravelNodePathType : uint8
 {
     none = 0,
     walk = 1,
-    portal = 2,
+    // values 2 (areaTrigger), 5 (teleportSpell), 6 (staticPortal)
+    // reserved for future use — generation/execution not yet wired up.
     transport = 3,
-    flightPath = 4,
-    teleportSpell = 5,
-    staticPortal = 6,
-    flyingMount = 7
+    flightPath = 4
 };
 
 // A connection between two nodes.
@@ -264,15 +261,9 @@ public:
         return false;
     }
 
-    bool isPortal()
-    {
-        for (auto const& link : *getLinks())
-            if (link.second->getPathType() == TravelNodePathType::portal ||
-                link.second->getPathType() == TravelNodePathType::staticPortal)
-                return true;
-
-        return false;
-    }
+    // Portal-style link types (areaTrigger, staticPortal) are not
+    // generated in this PR. Stub retained so consumers compile.
+    bool isPortal() { return false; }
 
     bool isWalking()
     {
@@ -414,12 +405,10 @@ enum class PathNodeType : uint8
     NODE_PREPATH = 0,
     NODE_PATH = 1,
     NODE_NODE = 2,
-    NODE_PORTAL = 3,
+    // values 3 (NODE_AREA_TRIGGER), 6 (NODE_TELEPORT), 7 (NODE_STATIC_PORTAL)
+    // reserved for future use — handlers not yet wired up.
     NODE_TRANSPORT = 4,
-    NODE_FLIGHTPATH = 5,
-    NODE_TELEPORT = 6,
-    NODE_FLYING_MOUNT = 7,
-    NODE_AREA_TRIGGER = 8
+    NODE_FLIGHTPATH = 5
 };
 
 struct PathNodePoint
@@ -673,7 +662,6 @@ public:
 
     void generateNpcNodes();
     void generateStartNodes();
-    void generateAreaTriggerNodes();
     void generateNodes();
     void generateTransportNodes();
     void generateZoneMeanNodes();
