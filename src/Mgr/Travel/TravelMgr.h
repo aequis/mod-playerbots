@@ -229,6 +229,28 @@ public:
 
     float getAngleBetween(WorldPosition dir1, WorldPosition dir2) { return abs(getAngleTo(dir1) - getAngleTo(dir2)); }
 
+    // Project this point onto the segment [p1, p2]. Returns t such that
+    // p1 + t*(p2-p1) is the projection. t=0 means at p1, t=1 means at p2,
+    // 0<t<1 means strictly between. Used to decide whether the bot has
+    // already passed a path waypoint and should skip to the next one.
+    float projectOnSegment(WorldPosition const& p1, WorldPosition const& p2) const
+    {
+        if (p1.GetMapId() != p2.GetMapId() || p1.GetMapId() != GetMapId())
+            return 0.0f;
+
+        float dx = p2.GetPositionX() - p1.GetPositionX();
+        float dy = p2.GetPositionY() - p1.GetPositionY();
+        float dz = p2.GetPositionZ() - p1.GetPositionZ();
+
+        float lenSq = dx * dx + dy * dy + dz * dz;
+        if (lenSq == 0.0f)
+            return 0.0f;
+
+        return ((GetPositionX() - p1.GetPositionX()) * dx +
+                (GetPositionY() - p1.GetPositionY()) * dy +
+                (GetPositionZ() - p1.GetPositionZ()) * dz) / lenSq;
+    }
+
     WorldPosition lastInRange(std::vector<WorldPosition> list, float minDist = -1.f, float maxDist = -1.f);
     WorldPosition firstOutRange(std::vector<WorldPosition> list, float minDist = -1.f, float maxDist = -1.f);
 
