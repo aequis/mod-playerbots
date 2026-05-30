@@ -89,9 +89,6 @@ protected:
 
     PathResult GeneratePath(float x, float y, float z, uint32 acceptMask = DEFAULT_PATH_ACCEPT_MASK, bool forceDestination = false);
 
-    bool GetTravelPlan(TravelPlan& plan, WorldPosition destination);
-    bool ExecuteTravelPlan(TravelPlan& state);
-
     // Returns a unified TravelPath for the move. Mirror of the reference
     // ResolveMovePath shape: 10% lastPath reuse short-circuit, choose
     // graph (cross-map / >sightDistance) or live mmap probe, regression
@@ -125,16 +122,6 @@ protected:
         float botX, float botY, float botZ,
         float& outX, float& outY, float& outZ);
     bool BoardTransport(Transport* transport);
-
-private:
-    bool LaunchWalkSpline(TravelPlan& state);
-    bool MoveToSpline(TravelPlan& state, WorldPosition target);
-    // Per-segment mmap refinement of a travel-node-graph walk batch.
-    // The graph stores offline-baked coords whose straight-line
-    // interpolation may pass through geometry the bot can't actually
-    // traverse. Returns false if any segment is unwalkable per the
-    // live navmesh, in which case the caller should abort the plan.
-    bool RefineWalkPoints(std::vector<G3D::Vector3>& walkPoints);
 
 protected:
     struct CheckAngle
