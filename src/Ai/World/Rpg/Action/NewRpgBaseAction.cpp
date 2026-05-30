@@ -50,10 +50,6 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     if (dest == WorldPosition())
         return false;
 
-    // performance optimization
-    if (IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
-        return false;
-
     // Already-at-dest short-stop. Below targetPosRecalcDistance the
     // move is effectively done — stop any active spline and clear
     // the cached path if it pointed here, so we don't keep gliding.
@@ -473,9 +469,6 @@ bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
 
 bool NewRpgBaseAction::MoveRandomNear(float moveStep, MovementPriority priority, WorldObject* center)
 {
-    if (IsWaitingForLastMove(priority))
-        return false;
-
     float const distance = (0.4f + rand_norm() * 0.6f) * moveStep;
     float const angle = (float)rand_norm() * 2 * static_cast<float>(M_PI);
     float const dx = bot->GetPositionX() + distance * cos(angle);

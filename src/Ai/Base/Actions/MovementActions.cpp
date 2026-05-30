@@ -215,9 +215,6 @@ bool MovementAction::JumpTo(uint32 mapId, float x, float y, float z, MovementPri
     if (IsDuplicateMove(x, y, z))
         return false;
 
-    if (IsWaitingForLastMove(priority))
-        return false;
-
     float speed = bot->GetSpeed(MOVE_RUN);
     MotionMaster& mm = *bot->GetMotionMaster();
     mm.Clear();
@@ -322,10 +319,6 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
         return false;
     }
     if (IsDuplicateMove(x, y, z))
-    {
-        return false;
-    }
-    if (IsWaitingForLastMove(priority))
     {
         return false;
     }
@@ -1051,27 +1044,6 @@ bool MovementAction::IsDuplicateMove(float x, float y, float z)
         return false;
 
     return true;
-}
-
-bool MovementAction::IsWaitingForLastMove(MovementPriority priority)
-{
-    LastMovement& lastMove = *context->GetValue<LastMovement&>("last movement");
-
-    if (priority > lastMove.priority)
-        return false;
-
-    // Stale delay bypass: if the bot has actually stopped moving (spline
-    // finalized + no movement flags), the delay is meaningless — common
-    // after combat ends with MOVEMENT_COMBAT priority still recorded,
-    // which would otherwise silently gate every non-combat MoveFarTo /
-    // MoveRandomNear request until the leftover delay expires.
-    if (bot->movespline->Finalized() && !bot->isMoving())
-        return false;
-
-    if (lastMove.lastdelayTime + lastMove.msTime > getMSTime())
-        return true;
-
-    return false;
 }
 
 bool MovementAction::IsMovingAllowed()

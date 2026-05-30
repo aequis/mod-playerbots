@@ -95,9 +95,8 @@ bool FollowAction::Execute(Event /*event*/)
 
                 bool const movingAllowed = IsMovingAllowed();
                 bool const dupMove = IsDuplicateMove(destX, destY, destZ);
-                bool const waiting = IsWaitingForLastMove(priority);
 
-                if (movingAllowed && !dupMove && !waiting)
+                if (movingAllowed && !dupMove)
                 {
                     if (bot->IsSitState())
                         bot->SetStandState(UNIT_STAND_STATE_STAND);
