@@ -163,8 +163,10 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         StartTravelPlan(dest);
         if (botAI->rpgInfo.HasActiveTravelPlan())
         {
-            EmitDebugMove("MoveFar", "travelplan",
-                          dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
+            // No `travelplan` label here — per-tick re-resolve calls
+            // StartTravelPlan every tick, which would whisper-spam.
+            // The executor emits per-step labels (TravelPlan:walk-start,
+            // TravelPlan:flight, TravelPlan:transport-*) on actual dispatch.
             return UpdateTravelPlan();
         }
         // Graph returned no plan — fall through to mmap probe.
