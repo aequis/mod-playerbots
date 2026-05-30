@@ -146,20 +146,20 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
                     ((bot->GetMapId() != dest.GetMapId()) ||
                      (dis > sPlayerbotAIConfig.sightDistance));
 
-    // Ride the active node plan only if its dest still matches.
-    // A stale plan would steer the bot past a new target.
-    if (tryNodes && botAI->rpgInfo.HasActiveTravelPlan())
-    {
-        if (botAI->rpgInfo.travelPlan.destination.distance(dest) > 10.0f)
-            botAI->rpgInfo.ClearTravel();
-        else
-            return UpdateTravelPlan();
-    }
-
-    // PRIORITY: try the travel-node graph FIRST when the move is
-    // long enough to need it.
+    // Per-tick re-resolve (cmangos pattern). Rebuild the travel plan
+    // from the bot's CURRENT position every tick rather than caching
+    // a multi-step plan and advancing through it. Recovers naturally
+    // from knockback, off-route drift, mid-execution destination
+    // changes, and blocked waypoints. Cost: per-tick GetFullPath call;
+    // the lastPath cache (10% reuse block above) handles the common
+    // case where the cached path still ends near the same destination
+    // and avoids re-derivation.
     if (tryNodes)
     {
+        if (botAI->rpgInfo.HasActiveTravelPlan() &&
+            botAI->rpgInfo.travelPlan.destination.distance(dest) > 10.0f)
+            botAI->rpgInfo.ClearTravel();
+
         StartTravelPlan(dest);
         if (botAI->rpgInfo.HasActiveTravelPlan())
         {
