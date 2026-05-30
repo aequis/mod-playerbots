@@ -706,6 +706,18 @@ bool TravelPath::IsPathCheating(std::vector<WorldPosition> const& path, float en
     return false;
 }
 
+bool TravelPath::cutTo(PathNodePoint point, bool including)
+{
+    auto it = std::find(fullPath.begin(), fullPath.end(), point);
+
+    if (it == fullPath.end())
+        return false;
+
+    auto cutIt = including ? std::next(it) : it;
+    fullPath.erase(fullPath.begin(), cutIt);
+    return true;
+}
+
 bool TravelPath::makeShortCut(WorldPosition startPos, float maxDist, Unit* bot)
 {
     if (GetPath().empty())

@@ -492,6 +492,12 @@ public:
 
     bool makeShortCut(WorldPosition startPos, float maxDist, Unit* bot = nullptr);
 
+    // Trim the path up to (and optionally including) the given point.
+    // Returns true if the point was found. Used by upcoming special-
+    // movement detection to advance the path past a portal/transport/
+    // area-trigger node once the bot reaches it.
+    bool cutTo(PathNodePoint point, bool including);
+
     // Reject paths the navmesh accepts but a player can't walk:
     // 2-point shortcut over 5y, or > 10y vertical drop with slope steeper than 2:1.
     static bool IsPathCheating(std::vector<WorldPosition> const& path,
