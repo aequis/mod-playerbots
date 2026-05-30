@@ -138,13 +138,13 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     float disToDest = bot->GetDistance(dest);
     float dis = bot->GetExactDist(dest);
 
-    // Try the travel-node graph first for cross-map or > 50y moves;
-    // fall back to chained mmap probe otherwise. BGs skip the graph.
-    constexpr float TRAVELNODE_THRESHOLD = 50.0f;
+    // Try the travel-node graph for cross-map or moves longer than the
+    // bot's sight distance; otherwise the chained mmap probe handles it.
+    // BGs skip the graph.
     bool tryNodes = sPlayerbotAIConfig.enableTravelNodes &&
                     !bot->InBattleground() &&
                     ((bot->GetMapId() != dest.GetMapId()) ||
-                     (dis > TRAVELNODE_THRESHOLD));
+                     (dis > sPlayerbotAIConfig.sightDistance));
 
     // Ride the active node plan only if its dest still matches.
     // A stale plan would steer the bot past a new target.
@@ -444,19 +444,23 @@ bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
     if (!map)
         return false;
 
-    // 8 angles around the target, first one reachable wins. LOS check
-    // ignores M2 models (trees, decorative props) so long-distance NPCs
-    // through forested terrain still pass — the mmap probe in MoveFarTo
-    // is the authoritative reachability check.
-    float const baseAngle = object->GetAngle(bot);
+    // 8 angles around the target starting at the bot's preferred follow
+    // angle (group-aware spread). For each angle, ask the engine for a
+    // valid nearby ground point at the requested distance — that snaps
+    // to terrain/collision. LOS check ignores M2 models so long-distance
+    // NPCs through forested terrain still pass; the mmap probe in
+    // MoveFarTo is the authoritative reachability check.
+    float const followAngle = GetFollowAngle();
+    float const searchSize = bot->GetObjectSize();
 
     for (float step = 0.0f; step < 2.0f * static_cast<float>(M_PI);
          step += static_cast<float>(M_PI) / 4.0f)
     {
-        float const angle = baseAngle + step;
-        float const x = object->GetPositionX() + std::cos(angle) * distance;
-        float const y = object->GetPositionY() + std::sin(angle) * distance;
-        float const z = object->GetPositionZ();
+        float const angle = followAngle + step;
+        float x = object->GetPositionX();
+        float y = object->GetPositionY();
+        float z = object->GetPositionZ();
+        object->GetNearPoint(bot, x, y, z, searchSize, distance, angle);
 
         if (!bot->IsWithinLOS(x, y, z + bot->GetCollisionHeight(),
                               VMAP::ModelIgnoreFlags::M2))
