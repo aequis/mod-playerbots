@@ -3061,9 +3061,15 @@ TravelPath MovementAction::ResolveMovePath(WorldPosition const& startPos,
         return lastMove.lastPath;
 
     // Long path = cross-map or beyond sight; otherwise pure mmap probe.
+    // Map 609 (Ebon Hold, DK starter) special-case: the area is stacked
+    // vertically, so a horizontally-close target on a different floor
+    // needs graph routing through the spiral stairs even when within
+    // sight distance.
     bool const needsLongPath =
         startPos.GetMapId() != endPos.GetMapId() ||
-        totalDistance > sPlayerbotAIConfig.sightDistance;
+        totalDistance > sPlayerbotAIConfig.sightDistance ||
+        (startPos.GetMapId() == 609 &&
+         std::fabs(startPos.GetPositionZ() - endPos.GetPositionZ()) > 20.0f);
 
     TravelPath out;
 
