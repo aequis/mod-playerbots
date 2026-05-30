@@ -3283,7 +3283,36 @@ bool MovementAction::HandleSpecialMovement(TravelPath& path)
             return bot->ActivateTaxiPathTo(route, flightMaster, 0);
         }
 
-        // NODE_TELEPORT consumer not yet re-added; falls through.
+        case PathNodeType::NODE_TELEPORT:
+        {
+            if (!next.entry)
+                return false;
+
+            // Can't cast while flying — let the bot land first.
+            bool const canCastNow = !bot->IsFlying();
+
+            // Hearthstone (item 8690) — fire if available and not flying high.
+            if (next.entry == 8690)
+            {
+                if (canCastNow)
+                    return botAI->DoSpecificAction("hearthstone",
+                                                   Event("move action"), true);
+                return false;
+            }
+
+            // Other teleport spells: dismount, drop shapeshift, queue cast.
+            // Skipped while flying high — caller's next-tick walk handles
+            // the descent.
+            if (!canCastNow)
+                return false;
+            if (bot->IsMounted())
+                bot->Dismount();
+            botAI->RemoveShapeshift();
+            return botAI->DoSpecificAction(
+                "cast",
+                Event("rpg action", std::to_string(next.entry)), true);
+        }
+
         default:
             return false;
     }
