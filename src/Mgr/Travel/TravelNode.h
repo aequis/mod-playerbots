@@ -498,6 +498,13 @@ public:
     // area-trigger node once the bot reaches it.
     bool cutTo(PathNodePoint point, bool including);
 
+    // Returns true if the next reachable segment is a special-handling
+    // node (portal / area-trigger / transport / flightpath / teleport)
+    // and the bot is close enough / positioned right to handle it now.
+    // Trims the path up to that segment as a side effect. Caller then
+    // dispatches the matching special-movement handler on the new head.
+    bool UpcommingSpecialMovement(WorldPosition startPos, float maxDist, bool onTransport);
+
     // Reject paths the navmesh accepts but a player can't walk:
     // 2-point shortcut over 5y, or > 10y vertical drop with slope steeper than 2:1.
     static bool IsPathCheating(std::vector<WorldPosition> const& path,
@@ -506,6 +513,24 @@ public:
     std::ostringstream const print();
 
 private:
+    // Returns the next-best-point iterator within maxDist from startPos:
+    // skips waypoints behind the bot, advances while shouldMoveToNextPoint
+    // allows, projects onto current segment to decide if the bot has
+    // already passed it.
+    std::vector<PathNodePoint>::iterator getNextPoint(WorldPosition startPos,
+                                                     float maxDist,
+                                                     bool onTransport);
+
+    // Heuristic for getNextPoint: decides whether the iterator should
+    // step forward to nextP. Stops at special nodes (area triggers,
+    // portals, transports, flight paths), at map boundaries, and when
+    // accumulated distance exceeds maxDist.
+    bool shouldMoveToNextPoint(WorldPosition startPos,
+                               std::vector<PathNodePoint>::iterator beg,
+                               std::vector<PathNodePoint>::iterator ed,
+                               std::vector<PathNodePoint>::iterator p,
+                               float& moveDist, float maxDist);
+
     std::vector<PathNodePoint> fullPath;
 };
 

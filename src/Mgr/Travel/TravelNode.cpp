@@ -718,6 +718,244 @@ bool TravelPath::cutTo(PathNodePoint point, bool including)
     return true;
 }
 
+namespace
+{
+    // Inlined zone-test: cylinder (radius>0) or rotated AABB.
+    bool IsPointInAreaTrigger(AreaTrigger const* at, uint32 mapId,
+                              float x, float y, float z, float delta)
+    {
+        if (mapId != at->map)
+            return false;
+
+        if (at->radius > 0)
+        {
+            float dx = x - at->x;
+            float dy = y - at->y;
+            float dz = z - at->z;
+            float distSq = dx * dx + dy * dy + dz * dz;
+            float r = at->radius + delta;
+            return distSq <= r * r;
+        }
+
+        // Box: rotate the test point back to AT-local axes, then check
+        // axis-aligned half-extents (length=X, width=Y, height=Z).
+        double rot = 2.0 * M_PI - at->orientation;
+        double sv = std::sin(rot);
+        double cv = std::cos(rot);
+
+        float lx = x - at->x;
+        float ly = y - at->y;
+        float rx = float(at->x + lx * cv - ly * sv) - at->x;
+        float ry = float(at->y + ly * cv + lx * sv) - at->y;
+        float rz = z - at->z;
+
+        return std::fabs(rx) <= at->length / 2 + delta &&
+               std::fabs(ry) <= at->width  / 2 + delta &&
+               std::fabs(rz) <= at->height / 2 + delta;
+    }
+}
+
+bool TravelPath::shouldMoveToNextPoint(WorldPosition startPos,
+                                       std::vector<PathNodePoint>::iterator beg,
+                                       std::vector<PathNodePoint>::iterator ed,
+                                       std::vector<PathNodePoint>::iterator p,
+                                       float& moveDist, float maxDist)
+{
+    if (p == ed)
+        return false;
+
+    auto nextP = std::next(p);
+    if (nextP == ed)
+        return false;
+
+    // Stop at adjacent area-trigger pair sharing entry — second is the
+    // teleport-out point we want to land on, not skip past.
+    if (p->type == PathNodeType::NODE_AREA_TRIGGER &&
+        nextP->type == PathNodeType::NODE_AREA_TRIGGER &&
+        p->entry == nextP->entry)
+        return false;
+
+    // Same idea for static-portal pair.
+    if (p->type == PathNodeType::NODE_STATIC_PORTAL &&
+        nextP->type == PathNodeType::NODE_STATIC_PORTAL &&
+        p->entry == nextP->entry)
+        return false;
+
+    // Approaching a transport boarding node — stop before it.
+    if (nextP->type == PathNodeType::NODE_TRANSPORT && nextP->entry)
+        return false;
+
+    // Mid-transport: traverse to the disembark side.
+    if (p->type == PathNodeType::NODE_TRANSPORT && p->entry)
+    {
+        // Off-transport detour around a transport segment (rare): skip.
+        if (nextP->type != PathNodeType::NODE_TRANSPORT && p != beg &&
+            std::prev(p)->type != PathNodeType::NODE_TRANSPORT)
+            return true;
+        return false;
+    }
+
+    // Stop within a flightpath run.
+    if (p->type == PathNodeType::NODE_FLIGHTPATH &&
+        nextP->type == PathNodeType::NODE_FLIGHTPATH)
+        return false;
+
+    float nextMove = p->point.distance(nextP->point);
+
+    if (p->point.GetMapId() != startPos.GetMapId() ||
+        ((moveDist + nextMove > maxDist ||
+          startPos.distance(nextP->point) > maxDist) && moveDist > 0))
+        return false;
+
+    moveDist += nextMove;
+    return true;
+}
+
+std::vector<PathNodePoint>::iterator
+TravelPath::getNextPoint(WorldPosition startPos, float maxDist, bool onTransport)
+{
+    float minDist = FLT_MAX;
+    auto startP = fullPath.begin();
+
+    if (!onTransport)
+    {
+        // Closest walkable point on the path (same map as the bot).
+        for (auto p = fullPath.begin(); p != fullPath.end(); ++p)
+        {
+            if (p->point.GetMapId() != startPos.GetMapId())
+                continue;
+            if (!p->isWalkable())
+                continue;
+
+            float curDist = p->point.distance(startPos);
+            if (curDist <= minDist)
+            {
+                minDist = curDist;
+                startP = p;
+            }
+        }
+    }
+
+    if (startP == fullPath.end())
+        return startP;
+
+    float moveDist = startP->point.distance(startPos);
+
+    for (auto p = startP; p != fullPath.end(); ++p)
+    {
+        if (shouldMoveToNextPoint(startPos, fullPath.begin(), fullPath.end(),
+                                  p, moveDist, maxDist))
+            continue;
+
+        startP = p;
+        break;
+    }
+
+    if (startP == fullPath.end() || !startP->isWalkable())
+        return startP;
+
+    auto nextP = std::next(startP);
+    if (nextP == fullPath.end())
+        return startP;
+
+    // If startPos is between startP and nextP, skip ahead to nextP.
+    float project = startPos.projectOnSegment(startP->point, nextP->point);
+    if (project > 0.0f && project < 1.0f)
+        return nextP;
+
+    return startP;
+}
+
+bool TravelPath::UpcommingSpecialMovement(WorldPosition startPos,
+                                          float maxDist, bool onTransport)
+{
+    if (fullPath.empty())
+        return false;
+
+    auto startP = getNextPoint(startPos, maxDist, onTransport);
+    if (startP == fullPath.end())
+        return false;
+
+    auto prevP = startP, nextP = startP;
+    if (startP != fullPath.begin())
+        prevP = std::prev(prevP);
+    if (std::next(nextP) != fullPath.end())
+        nextP = std::next(nextP);
+
+    // Area trigger: zone-gated. With entry, must be inside the trigger
+    // zone; without entry, fire as soon as we reach it.
+    if (startP->type == PathNodeType::NODE_AREA_TRIGGER)
+    {
+        if (startP->entry)
+        {
+            AreaTrigger const* at = sObjectMgr->GetAreaTrigger(startP->entry);
+            if (!at)
+                return false;
+
+            if (!IsPointInAreaTrigger(at, startPos.GetMapId(),
+                                      startPos.GetPositionX(),
+                                      startPos.GetPositionY(),
+                                      startPos.GetPositionZ(), 0.5f))
+                return false;
+        }
+
+        cutTo(*startP, false);
+        return true;
+    }
+
+    // Static portal (game-object spellcaster): interact when in range.
+    if (startP->type == PathNodeType::NODE_STATIC_PORTAL &&
+        startPos.distance(startP->point) < INTERACTION_DISTANCE)
+    {
+        cutTo(*startP, false);
+        return true;
+    }
+
+    // Teleport spell (hearthstone et al.): fire on the next-step marker.
+    if (nextP->type == PathNodeType::NODE_TELEPORT)
+    {
+        cutTo(*nextP, false);
+        return true;
+    }
+
+    // Flight path: interact with flight master when in range.
+    if (startP->type == PathNodeType::NODE_FLIGHTPATH &&
+        startPos.distance(startP->point) < INTERACTION_DISTANCE)
+    {
+        cutTo(*startP, false);
+        return true;
+    }
+
+    // Transport boarding/disembark. We don't expose a teleport-vs-walk
+    // toggle yet, so always take the walk-on-board path: cut to dock if
+    // off-transport, traverse to disembark if on-transport.
+    if (startP->type == PathNodeType::NODE_TRANSPORT)
+    {
+        uint32 entry = nextP->entry;
+
+        if (!onTransport)
+        {
+            // prevP = dock, startP = where transport will stop.
+            cutTo(*prevP, false);
+            return true;
+        }
+
+        // On transport: walk to disembark.
+        for (auto p = startP; p != fullPath.end(); ++p)
+        {
+            if (p->type != PathNodeType::NODE_TRANSPORT ||
+                (p->entry && p->entry != entry))
+            {
+                cutTo(*p, false);
+                return true;
+            }
+            prevP = p;
+        }
+    }
+
+    return false;
+}
+
 bool TravelPath::makeShortCut(WorldPosition startPos, float maxDist, Unit* bot)
 {
     if (GetPath().empty())
