@@ -217,26 +217,10 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     // Walk the chained probe's full waypoint chain via DispatchPathPoints.
     if (!probe.empty() && probe.size() >= 2)
     {
-        WorldPosition stepDest = probe.back();
-        float endDistToDest = dest.GetExactDist(stepDest.GetPositionX(),
-            stepDest.GetPositionY(), stepDest.GetPositionZ());
+        float endDistToDest = dest.GetExactDist(probe.back().GetPositionX(),
+            probe.back().GetPositionY(), probe.back().GetPositionZ());
         if (endDistToDest + 5.0f < disToDest)
         {
-            // Z gap check: if the probe's last waypoint is well below
-            // the requested destination Z, the chain walked the ground
-            // polygon graph toward an elevated target it can't reach
-            // (quest giver on top of Aldrassil etc.). Refuse to dispatch
-            // — bot waits instead of tunneling into the visual model.
-            // 10y tolerates normal terrain variation (ramp ends, hill
-            // tops) while still catching clearly unreachable elevations.
-            if (std::fabs(stepDest.GetPositionZ() - dest.GetPositionZ()) > 10.0f)
-            {
-                EmitDebugMove("MoveFar", "z-mismatch",
-                              dest.GetPositionX(), dest.GetPositionY(),
-                              dest.GetPositionZ());
-                return false;
-            }
-
             Movement::PointsArray points;
             points.reserve(probe.size());
             for (auto const& wp : probe)
@@ -253,39 +237,18 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         }
     }
 
-    // Probe failed or didn't progress — emit visibility whisper so
-    // the user can see WHY mmap didn't dispatch.
-    {
-        bool const probeProgressed = !probe.empty() && probe.size() >= 2 &&
-            (dest.GetExactDist(probe.back().GetPositionX(),
-                probe.back().GetPositionY(), probe.back().GetPositionZ()) + 5.0f < disToDest);
-        if (!probeProgressed)
-        {
-            char const* reason = (probe.empty() || probe.size() < 2) ? "mmap-empty" : "mmap-noprogress";
-            EmitDebugMove("MoveFar", reason,
-                          dest.GetPositionX(), dest.GetPositionY(),
-                          dest.GetPositionZ());
-        }
-    }
-
-    // Empty-probe fallback: single-waypoint MoveTo via engine PathGenerator.
-    // Cross-map can't be served by a single-map spline — bail.
-    if (bot->GetMapId() != dest.GetMapId())
-        return false;
-
-    // LOS gate: don't air-walk through trees/walls when the engine
-    // would otherwise drop to a straight-line BuildShortcut spline.
-    if (!bot->IsWithinLOS(dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ()))
-    {
-        EmitDebugMove("MoveFar", "spline-blocked",
-                      dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
-        return false;
-    }
-
-    EmitDebugMove("MoveFar", "spline",
-                  dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
-    return MoveTo(dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(),
-                  false, false, false, false);
+    // Probe failed or didn't progress. Emit visibility whisper and bail.
+    // No straight-line fallback: dispatching a single-waypoint MoveTo
+    // here delegates to the engine's PointMovementGenerator, which on
+    // PATHFIND_NOPATH issues a straight-line spline through any terrain.
+    // That caused bots to tunnel into mountains/trees when the chained
+    // probe couldn't find a valid path. Better to return false and let
+    // the caller pick a different objective.
+    char const* reason = (probe.empty() || probe.size() < 2) ? "mmap-empty" : "mmap-noprogress";
+    EmitDebugMove("MoveFar", reason,
+                  dest.GetPositionX(), dest.GetPositionY(),
+                  dest.GetPositionZ());
+    return false;
 }
 
 bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
@@ -562,16 +525,18 @@ bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
         float y = object->GetPositionY() + std::sin(angle) * distance;
         float z = object->GetPositionZ();
 
-        // LOS check at eye height — bot must be able to reach the candidate.
-        if (!bot->IsWithinLOS(x, y, z + bot->GetCollisionHeight()))
-            continue;
-
-        // Candidate must also have LOS to the GO itself — otherwise the
-        // bot arrives at a spot where it can't interact (e.g., a tree
-        // stands between candidate and GO). Without this, the very first
-        // angle (toward the bot) wins and lands the bot up against the
+        // Candidate must have LOS to the GO — otherwise the bot would
+        // arrive at a spot where it can't interact (e.g., a tree stands
+        // between candidate and GO). Without this, the first angle
+        // (toward the bot) wins and lands the bot up against the
         // obstacle instead of forcing iteration to an angle on the GO's
         // far side from the blocker.
+        //
+        // Note: bot→candidate LOS is intentionally NOT checked. For
+        // long-distance targets (NPC across the zone, quest source
+        // 200y away) a direct line-of-sight through terrain almost
+        // always fails — bots aren't expected to see through hills.
+        // The mmap probe in MoveFarTo validates actual reachability.
         if (!object->IsWithinLOS(x, y, z + bot->GetCollisionHeight()))
             continue;
 
