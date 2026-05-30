@@ -135,10 +135,11 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         }
     }
 
-    float const dis = bot->GetExactDist(dest);
+    float disToDest = bot->GetDistance(dest);
+    float dis = bot->GetExactDist(dest);
 
     // Try the travel-node graph first for cross-map or > 50y moves;
-    // fall back to engine pathfinding otherwise. BGs skip the graph.
+    // fall back to chained mmap probe otherwise. BGs skip the graph.
     constexpr float TRAVELNODE_THRESHOLD = 50.0f;
     bool tryNodes = sPlayerbotAIConfig.enableTravelNodes &&
                     !bot->InBattleground() &&
@@ -166,7 +167,7 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
                           dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
             return UpdateTravelPlan();
         }
-        // Graph returned no plan — fall through to engine pathfinding.
+        // Graph returned no plan — fall through to mmap probe.
     }
     else if (botAI->rpgInfo.HasActiveTravelPlan())
     {
@@ -174,24 +175,81 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         botAI->rpgInfo.ClearTravel();
     }
 
+    // 40-step chained mmap probe — primary for short moves and
+    // fallback when the node graph returned no plan.
+    WorldPosition botPos(bot);
+    std::vector<WorldPosition> probe = botPos.getPathTo(dest, bot);
+
+    // Regression guard: prefer cached lastPath if it still ends closer
+    // to dest than the new probe — catches probes blocked by geometry.
+    {
+        LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+        if (!lastMove.lastPath.empty() && !probe.empty() && probe.size() >= 2)
+        {
+            WorldPosition lastBack = lastMove.lastPath.getBack();
+            if (lastBack.GetMapId() == dest.GetMapId())
+            {
+                float cachedToDest = lastBack.distance(dest);
+                float probeToDest = dest.GetExactDist(probe.back().GetPositionX(),
+                                                      probe.back().GetPositionY(),
+                                                      probe.back().GetPositionZ());
+                if (cachedToDest <= probeToDest)
+                {
+                    WorldPosition botPosNow(bot);
+                    lastMove.lastPath.makeShortCut(botPosNow, sPlayerbotAIConfig.reactDistance, bot);
+                    if (!lastMove.lastPath.empty())
+                    {
+                        std::vector<WorldPosition> const& pts = lastMove.lastPath.getPointPath();
+                        if (pts.size() >= 2)
+                        {
+                            Movement::PointsArray points;
+                            points.reserve(pts.size());
+                            for (auto const& wp : pts)
+                                points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
+                            return DispatchPathPoints(dest, points, "regress-keep");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Walk the chained probe's full waypoint chain via DispatchPathPoints.
+    if (!probe.empty() && probe.size() >= 2)
+    {
+        float endDistToDest = dest.GetExactDist(probe.back().GetPositionX(),
+            probe.back().GetPositionY(), probe.back().GetPositionZ());
+        if (endDistToDest + 5.0f < disToDest)
+        {
+            Movement::PointsArray points;
+            points.reserve(probe.size());
+            for (auto const& wp : probe)
+                points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
+
+            if (points.size() >= 2)
+            {
+                // Mount up if outdoors and not in combat.
+                if (!bot->IsMounted() && !bot->IsInCombat() && bot->IsOutdoors() && bot->IsAlive())
+                    botAI->DoSpecificAction("check mount state", Event(), true);
+
+                return DispatchPathPoints(dest, points, "mmap");
+            }
+        }
+    }
+
+    // Probe failed or didn't progress. Attempt straight-line MoveTo to
+    // the destination — engine PathFinder handles per-poly filtering and
+    // the bot's STEEP/water filter is honored via CreateFilter. If even
+    // that fails, the engine falls back to a direct spline.
     if (bot->GetMapId() != dest.GetMapId())
         return false;
 
-    // Mount up if outdoors and not in combat.
-    if (!bot->IsMounted() && !bot->IsInCombat() && bot->IsOutdoors() && bot->IsAlive())
-        botAI->DoSpecificAction("check mount state", Event(), true);
-
-    // Single MoveTo — engine's PathGenerator handles pathfinding with
-    // the bot filter (CreateFilter IsBot block). Partial paths from the
-    // 148-poly cap walk what they can; next tick re-pathfinds from the
-    // new position. No custom probe pipeline; no precomputed-waypoint
-    // dispatch.
-    bool moved = MoveTo(dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(),
-                        dest.GetPositionZ(), false, false, false, false);
-    EmitDebugMove("MoveFar", moved ? "mmap" : "fail",
+    char const* reason = (probe.empty() || probe.size() < 2) ? "mmap-empty" : "mmap-noprogress";
+    EmitDebugMove("MoveFar", reason,
                   dest.GetPositionX(), dest.GetPositionY(),
                   dest.GetPositionZ());
-    return moved;
+    return MoveTo(dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(),
+                  dest.GetPositionZ(), false, false, false, false);
 }
 
 bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
