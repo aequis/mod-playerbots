@@ -1251,6 +1251,17 @@ bool TravelNodeMap::GetFullPath(TravelPlan& plan,
     WorldPosition botPos, uint32 botZoneId,
     WorldPosition destination, Unit* bot)
 {
+    // Capture previous pathToStart from the about-to-be-reset plan so we
+    // can try cropPathTo to reuse it across the per-tick re-resolve.
+    std::vector<WorldPosition> prevPathToStart;
+    for (auto const& pt : plan.steps.GetPathRef())
+    {
+        if (pt.type == PathNodeType::NODE_PREPATH)
+            prevPathToStart.push_back(pt.point);
+        else
+            break;  // PREPATH is always at the head
+    }
+
     plan.Reset();
     plan.destination = destination;
 
@@ -1270,52 +1281,102 @@ bool TravelNodeMap::GetFullPath(TravelPlan& plan,
 
     std::shared_lock<std::shared_timed_mutex> guard(m_nMapMtx);
 
-    // Find nearest nodes (zone-indexed, fast)
-    TravelNode* startNode = GetNearestNodeInZone(botPos, botZoneId);
-    if (!startNode)
-        startNode = GetNearestNodeOnMap(botPos);
+    // K-nearest start + end node candidates (cmangos parity: K=5).
+    // Iterate combinations — first pair with a graph route wins. The
+    // single-nearest may have no route while the 2nd/3rd does.
+    constexpr uint32 K = 5;
+    auto pickKNearest = [&](WorldPosition pos, uint32 zoneId) -> std::vector<TravelNode*>
+    {
+        std::vector<TravelNode*> const& zoneNodes = GetNodesInZone(zoneId);
+        std::vector<TravelNode*> candidates(zoneNodes.begin(), zoneNodes.end());
+        if (candidates.empty())
+        {
+            // Fallback to per-map scan
+            for (TravelNode* n : nodes)
+                if (n && n->getPosition()->GetMapId() == pos.GetMapId())
+                    candidates.push_back(n);
+        }
+        if (candidates.empty())
+            return {};
+        uint32 n = std::min<uint32>(K, candidates.size());
+        std::partial_sort(candidates.begin(), candidates.begin() + n, candidates.end(),
+                          [pos](TravelNode* i, TravelNode* j) { return i->fDist(pos) < j->fDist(pos); });
+        candidates.resize(n);
+        return candidates;
+    };
 
     uint32 destZone = sMapMgr->GetZoneId(PHASEMASK_NORMAL, destination);
-    TravelNode* endNode = GetNearestNodeInZone(destination, destZone);
-    if (!endNode)
-        endNode = GetNearestNodeOnMap(destination);
+    std::vector<TravelNode*> startCandidates = pickKNearest(botPos, botZoneId);
+    std::vector<TravelNode*> endCandidates = pickKNearest(destination, destZone);
 
-    if (!startNode || !endNode || startNode == endNode)
+    if (startCandidates.empty() || endCandidates.empty())
         return false;
 
-    if (!startNode->hasRouteTo(endNode))
-        return false;
+    TravelNode* startNode = nullptr;
+    TravelNode* endNode = nullptr;
+    TravelNodeRoute route;
+    for (TravelNode* s : startCandidates)
+    {
+        for (TravelNode* e : endCandidates)
+        {
+            if (!s || !e || s == e)
+                continue;
+            if (!s->hasRouteTo(e))
+                continue;
+            TravelNodeRoute r = GetNodeRoute(s, e, nullptr);
+            if (r.isEmpty())
+                continue;
+            startNode = s;
+            endNode = e;
+            route = r;
+            break;
+        }
+        if (!route.isEmpty())
+            break;
+    }
 
-    TravelNodeRoute route = GetNodeRoute(startNode, endNode, nullptr);
-    if (route.isEmpty())
+    if (route.isEmpty() || !startNode || !endNode)
         return false;
 
     WorldPosition startNodePos = *startNode->getPosition();
     WorldPosition endNodePos = *endNode->getPosition();
 
-    // pathToStart: mmap-path from bot to the first node — without this
-    // the executor's NODE_PREPATH walks a 2-point straight line and can
-    // tunnel through terrain to reach the first node.
-    std::vector<WorldPosition> pathToStart = {botPos};
-    if (bot && botPos.GetMapId() == startNodePos.GetMapId())
+    // pathToStart: mmap-path from bot to the first node. Try cropping
+    // the previous pathToStart first (cmangos parity) — if it still
+    // reaches the chosen startNode within reactDistance we avoid a full
+    // re-probe. Falls back to fresh getPathTo if crop fails or invalid.
+    std::vector<WorldPosition> pathToStart;
+    if (!prevPathToStart.empty())
+    {
+        std::vector<WorldPosition> cropped = prevPathToStart;
+        bool ok = startNodePos.cropPathTo(cropped, sPlayerbotAIConfig.reactDistance);
+        if (ok && cropped.size() >= 2)
+            pathToStart = cropped;
+    }
+    if (pathToStart.empty() && bot && botPos.GetMapId() == startNodePos.GetMapId())
     {
         std::vector<WorldPosition> probe = botPos.getPathTo(startNodePos, bot);
         if (probe.size() >= 2)
             pathToStart = probe;
     }
+    if (pathToStart.empty())
+        pathToStart = {botPos};
 
-    // pathToEnd: mmap-path from the last node to the destination — without
-    // this the route ends at lastNode and the bot stops short of dest.
-    // Cross-map case: bot can't mmap-query the destination map; the
-    // single-point fallback gets re-resolved per-tick once bot crosses.
-    std::vector<WorldPosition> pathToEnd = {destination};
-    if (bot && botPos.GetMapId() == endNodePos.GetMapId() &&
-        botPos.GetMapId() == destination.GetMapId())
+    // pathToEnd: mmap-path from the last node to the destination.
+    // Single-map case: use bot's PathGenerator directly.
+    // Cross-map case: pass nullptr — getPathTo constructs a tempCreature
+    // on the destination's base map so we can pathfind there even though
+    // bot isn't loaded into it.
+    std::vector<WorldPosition> pathToEnd;
+    if (endNodePos.GetMapId() == destination.GetMapId())
     {
-        std::vector<WorldPosition> probe = endNodePos.getPathTo(destination, bot);
+        Unit* pathBot = (bot && bot->GetMapId() == destination.GetMapId()) ? bot : nullptr;
+        std::vector<WorldPosition> probe = endNodePos.getPathTo(destination, pathBot);
         if (probe.size() >= 2)
             pathToEnd = probe;
     }
+    if (pathToEnd.empty())
+        pathToEnd = {destination};
 
     plan.steps = route.BuildPath(pathToStart, pathToEnd, nullptr);
 
