@@ -1280,17 +1280,37 @@ bool TravelNodeMap::GetFullPath(TravelPlan& plan,
     plan.Reset();
     plan.destination = destination;
 
-    // mmap-probe first: if a 40-step probe reaches dest, skip the
-    // graph entirely — a direct walk beats a node hop.
+    // mmap-probe first: if a 40-step probe makes meaningful progress,
+    // prefer it over the graph. Loosened from "reaches within spellDistance"
+    // because the strict gate falls through to graph routing whenever the
+    // probe stops a few yards short of the destination (e.g., bot can't
+    // reach the exact GO position, or destination is inside an area the
+    // probe can't fully enter). Graph paths come from DB-cached walk
+    // edges baked at offline generation time and can route through
+    // terrain that current mmaps treat as unwalkable.
+    //
+    // Accept the probe if EITHER:
+    //   (a) it reaches within 30y of destination, OR
+    //   (b) it makes >50% progress and got at least 30y total
     if (botPos.GetMapId() == destination.GetMapId())
     {
         std::vector<WorldPosition> probe = destination.getPathFromPath({botPos}, bot, 40);
-        if (probe.size() >= 2 && destination.isPathTo(probe, sPlayerbotAIConfig.spellDistance))
+        if (probe.size() >= 2)
         {
-            plan.steps.addPoint(botPos, PathNodeType::NODE_PREPATH);
-            for (size_t i = 1; i < probe.size(); ++i)
-                plan.steps.addPoint(probe[i], PathNodeType::NODE_PATH);
-            return true;
+            float const totalDist = botPos.distance(destination);
+            float const probeEndToDest = destination.distance(probe.back());
+            float const probeProgress = totalDist - probeEndToDest;
+
+            bool const closeEnough = probeEndToDest < 30.0f;
+            bool const meaningfulProgress = probeProgress > totalDist * 0.5f && probeProgress > 30.0f;
+
+            if (closeEnough || meaningfulProgress)
+            {
+                plan.steps.addPoint(botPos, PathNodeType::NODE_PREPATH);
+                for (size_t i = 1; i < probe.size(); ++i)
+                    plan.steps.addPoint(probe[i], PathNodeType::NODE_PATH);
+                return true;
+            }
         }
     }
 

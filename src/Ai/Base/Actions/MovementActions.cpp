@@ -1060,7 +1060,14 @@ bool MovementAction::IsWaitingForLastMove(MovementPriority priority)
     if (priority > lastMove.priority)
         return false;
 
-    // heuristic 5s
+    // Stale delay bypass: if the bot has actually stopped moving (spline
+    // finalized + no movement flags), the delay is meaningless — common
+    // after combat ends with MOVEMENT_COMBAT priority still recorded,
+    // which would otherwise silently gate every non-combat MoveFarTo /
+    // MoveRandomNear request until the leftover delay expires.
+    if (bot->movespline->Finalized() && !bot->isMoving())
+        return false;
+
     if (lastMove.lastdelayTime + lastMove.msTime > getMSTime())
         return true;
 
