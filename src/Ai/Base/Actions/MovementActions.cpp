@@ -3659,9 +3659,77 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
 
         case PathNodeType::NODE_TELEPORT:
         {
-            // Teleport-spell node (e.g. mage portals). Not implemented
-            // — abort the plan instead of silently teleporting the
-            // bot. The plan executor regards this node as terminal.
+            // Teleport-spell node: hearthstone (item 6948 → spell 8690)
+            // or class teleport spells (mage portals, druid teleport).
+            // entry holds the spell ID; 8690 is the canonical hearthstone.
+            uint32 spellId = pt.entry;
+            if (!spellId)
+            {
+                state.Reset();
+                return false;
+            }
+
+            // Can't cast mid-flight or mid-cast; bail and retry next tick.
+            if (bot->IsInFlight() || bot->IsNonMeleeSpellCast(false))
+                return true;
+
+            if (bot->IsMounted())
+                bot->Dismount();
+            botAI->RemoveShapeshift();
+
+            // 8690 is Hearthstone — the AI has a dedicated action for it
+            // that handles cooldown and inventory checks. Other teleport
+            // spells go through the generic cast path.
+            bool cast = false;
+            if (spellId == 8690)
+                cast = botAI->DoSpecificAction("hearthstone", Event(), true);
+            else if (bot->HasSpell(spellId) && !bot->HasSpellCooldown(spellId))
+                cast = botAI->CastSpell(spellId, bot);
+
+            if (!cast)
+            {
+                state.Reset();
+                return false;
+            }
+
+            // Cast started — advance past the teleport step; the spell
+            // will move the bot, next tick picks up from wherever it lands.
+            state.stepIdx++;
+            return true;
+        }
+
+        case PathNodeType::NODE_AREA_TRIGGER:
+        {
+            // Walk into an area trigger, server handles teleport on entry.
+            // Pair: trigger (pointIdx) + dest (pointIdx+1).
+            if (state.stepIdx + 1 >= state.steps.size())
+            {
+                state.Reset();
+                return false;
+            }
+
+            const PathNodePoint& trigger = state.steps[state.stepIdx];
+            const PathNodePoint& dest = state.steps[state.stepIdx + 1];
+
+            // Already on destination map — area trigger fired, advance.
+            if (bot->GetMapId() == dest.point.GetMapId())
+            {
+                state.stepIdx += 2;
+                return true;
+            }
+
+            // Walk to the trigger; entering its radius teleports us.
+            float dist = bot->GetExactDist(trigger.point.GetPositionX(),
+                                           trigger.point.GetPositionY(),
+                                           trigger.point.GetPositionZ());
+            if (dist > INTERACTION_DISTANCE)
+                return MoveTo(trigger.point.GetMapId(),
+                              trigger.point.GetPositionX(),
+                              trigger.point.GetPositionY(),
+                              trigger.point.GetPositionZ());
+
+            // At trigger but didn't teleport — likely missing required
+            // quest/key. Abort; stuck-recovery in MoveFarTo decides next.
             state.Reset();
             return false;
         }

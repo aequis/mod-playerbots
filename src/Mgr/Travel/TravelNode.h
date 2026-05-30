@@ -418,7 +418,8 @@ enum class PathNodeType : uint8
     NODE_TRANSPORT = 4,
     NODE_FLIGHTPATH = 5,
     NODE_TELEPORT = 6,
-    NODE_FLYING_MOUNT = 7
+    NODE_FLYING_MOUNT = 7,
+    NODE_AREA_TRIGGER = 8
 };
 
 struct PathNodePoint
