@@ -14,10 +14,6 @@ LastMovement::LastMovement(LastMovement& other)
       taxiMaster(other.taxiMaster),
       lastFollow(other.lastFollow),
       lastAreaTrigger(other.lastAreaTrigger),
-      lastMoveToX(other.lastMoveToX),
-      lastMoveToY(other.lastMoveToY),
-      lastMoveToZ(other.lastMoveToZ),
-      lastMoveToOri(other.lastMoveToOri),
       lastFlee(other.lastFlee)
 {
     lastMoveShort = other.lastMoveShort;
@@ -31,11 +27,6 @@ void LastMovement::clear()
 {
     lastMoveShort = WorldPosition();
     lastPath.clear();
-    lastMoveToMapId = 0;
-    lastMoveToX = 0;
-    lastMoveToY = 0;
-    lastMoveToZ = 0;
-    lastMoveToOri = 0;
     lastFollow = nullptr;
     lastAreaTrigger = 0;
     lastFlee = 0;
@@ -55,11 +46,6 @@ void LastMovement::Set(Unit* follow)
 
 void LastMovement::Set(uint32 mapId, float x, float y, float z, float ori, float delayTime, MovementPriority pri)
 {
-    lastMoveToMapId = mapId;
-    lastMoveToX = x;
-    lastMoveToY = y;
-    lastMoveToZ = z;
-    lastMoveToOri = ori;
     lastFollow = nullptr;
     lastMoveShort = WorldPosition(mapId, x, y, z, ori);
     msTime = getMSTime();

@@ -56,11 +56,6 @@ public:
     Unit* lastFollow;
     uint32 lastAreaTrigger;
     time_t lastFlee;
-    uint32 lastMoveToMapId;
-    float lastMoveToX;
-    float lastMoveToY;
-    float lastMoveToZ;
-    float lastMoveToOri;
     WorldPosition lastMoveShort;
     uint32 msTime;
     MovementPriority priority;
@@ -70,7 +65,6 @@ public:
     // used by WaitForTransport to resume a transport segment if the
     // bot is still on it next tick (e.g. boat in motion). 0 = none.
     uint32 lastTransportEntry{0};
-    std::future<TravelPath> future;
 };
 
 class LastMovementValue : public ManualSetValue<LastMovement&>
