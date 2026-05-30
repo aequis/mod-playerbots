@@ -390,6 +390,14 @@ AiPlayerbot.AggroDistance = 22
 AiPlayerbot.TooCloseDistance = 5.0
 AiPlayerbot.MeleeDistance = 0.75
 AiPlayerbot.FollowDistance = 1.5
+#
+# WalkDistance
+#    Description: When the master is walking and within this many yards
+#                 of the bot, the bot matches their walk pace instead of
+#                 running. Set to 0 to disable pace-matching.
+#    Default:     5.0
+#
+AiPlayerbot.WalkDistance = 5.0
 AiPlayerbot.WhisperDistance = 6000.0
 AiPlayerbot.ContactDistance = 0.45
 AiPlayerbot.AoeRadius = 10
