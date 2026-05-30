@@ -62,19 +62,21 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         return false;
     }
 
-    // Already-at-dest short-stop. Below targetPosRecalcDistance the
-    // move is effectively done — stop any active spline and clear
-    // the cached path if it pointed here, so we don't keep gliding.
+    // Resume a transport ride if we're still on the same boat as last tick.
+    if (WaitForTransport())
+        return true;
+
+    WorldPosition botPos(bot);
+    LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+
+    // Short-stop: at destination — stop and clear the cached path.
     {
-        float const totalDistance = bot->GetExactDist(dest);
+        float const totalDistance = botPos.distance(dest);
         if (totalDistance < sPlayerbotAIConfig.targetPosRecalcDistance)
         {
-            LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
             if (!lastMove.lastPath.empty() &&
                 lastMove.lastPath.getBack().distance(dest) <= totalDistance)
-            {
                 lastMove.clear();
-            }
             bot->StopMoving();
             EmitDebugMove("MoveFar", "arrived",
                           dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
@@ -82,174 +84,65 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         }
     }
 
-    // 10% lastPath reuse — if the cached path's endpoint is still
-    // close (within 10%) to the new dest, trim the cached path to
-    // the bot's current position via makeShortCut and re-dispatch.
-    // Per-tick re-dispatch of the (trimmed) last path keeps the bot
-    // on-route after interrupts (knockback, combat, manual move)
-    // without needing a full replan.
+    // Per-tick re-resolve: rebuild the TravelPath from the bot's current
+    // position every tick (10% reuse short-circuits via the cached
+    // lastPath). Recovers naturally from knockback, off-route drift,
+    // destination changes, and blocked waypoints.
+    TravelPath path = ResolveMovePath(botPos, dest, lastMove);
+    lastMove.setPath(path);
+
+    if (path.empty())
     {
-        LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
-        if (!lastMove.lastPath.empty())
-        {
-            WorldPosition lastBack = lastMove.lastPath.getBack();
-            if (lastBack.GetMapId() == dest.GetMapId())
-            {
-                float totalDist = bot->GetExactDist(dest);
-                float maxDistChange = totalDist * 0.10f;
-                float distFromBotToBack = bot->GetExactDist(&lastBack);
-                if (lastBack.distance(dest) < maxDistChange && distFromBotToBack > 10.0f)
-                {
-                    WorldPosition botPos(bot);
-                    lastMove.lastPath.makeShortCut(botPos, sPlayerbotAIConfig.reactDistance, bot);
-
-                    // makeShortCut may clear the path if the bot drifted
-                    // too far off (>reactDistance from any waypoint). In
-                    // that case fall through to fresh planning.
-                    if (lastMove.lastPath.empty())
-                    {
-                        EmitDebugMove("MoveFar", "reuse-trim-failed",
-                                      dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
-                    }
-                    if (!lastMove.lastPath.empty())
-                    {
-                        std::vector<WorldPosition> const& pts = lastMove.lastPath.getPointPath();
-                        if (pts.size() >= 2)
-                        {
-                            Movement::PointsArray points;
-                            points.reserve(pts.size());
-                            for (auto const& wp : pts)
-                                points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
-                            return DispatchPathPoints(dest, points, "reuse");
-                        }
-                    }
-                    // Path was cleared or collapsed — fall through to fresh planning.
-                }
-            }
-        }
-    }
-
-    float disToDest = bot->GetDistance(dest);
-    float dis = bot->GetExactDist(dest);
-
-    // Try the travel-node graph for cross-map or moves longer than the
-    // bot's sight distance; otherwise the chained mmap probe handles it.
-    // BGs skip the graph.
-    bool tryNodes = sPlayerbotAIConfig.enableTravelNodes &&
-                    !bot->InBattleground() &&
-                    ((bot->GetMapId() != dest.GetMapId()) ||
-                     (dis > sPlayerbotAIConfig.sightDistance));
-
-    // Per-tick re-resolve (cmangos pattern). Rebuild the travel plan
-    // from the bot's CURRENT position every tick rather than caching
-    // a multi-step plan and advancing through it. Recovers naturally
-    // from knockback, off-route drift, mid-execution destination
-    // changes, and blocked waypoints. Cost: per-tick GetFullPath call;
-    // the lastPath cache (10% reuse block above) handles the common
-    // case where the cached path still ends near the same destination
-    // and avoids re-derivation.
-    if (tryNodes)
-    {
-        if (botAI->rpgInfo.HasActiveTravelPlan() &&
-            botAI->rpgInfo.travelPlan.destination.distance(dest) > 10.0f)
-            botAI->rpgInfo.ClearTravel();
-
-        StartTravelPlan(dest);
-        if (botAI->rpgInfo.HasActiveTravelPlan())
-        {
-            // No `travelplan` label here — per-tick re-resolve calls
-            // StartTravelPlan every tick, which would whisper-spam.
-            // The executor emits per-step labels (TravelPlan:walk-start,
-            // TravelPlan:flight, TravelPlan:transport-*) on actual dispatch.
-            return UpdateTravelPlan();
-        }
-        // Graph returned no plan — fall through to mmap probe.
-    }
-    else if (botAI->rpgInfo.HasActiveTravelPlan())
-    {
-        // Move dropped below node-first threshold — drop any leftover plan.
-        botAI->rpgInfo.ClearTravel();
-    }
-
-    // 40-step chained mmap probe — primary for short moves and
-    // fallback when the node graph returned no plan.
-    WorldPosition botPos(bot);
-    std::vector<WorldPosition> probe = botPos.getPathTo(dest, bot);
-
-    // Regression guard: prefer cached lastPath if it still ends closer
-    // to dest than the new probe — catches probes blocked by geometry.
-    {
-        LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
-        if (!lastMove.lastPath.empty() && !probe.empty() && probe.size() >= 2)
-        {
-            WorldPosition lastBack = lastMove.lastPath.getBack();
-            if (lastBack.GetMapId() == dest.GetMapId())
-            {
-                float cachedToDest = lastBack.distance(dest);
-                float probeToDest = dest.GetExactDist(probe.back().GetPositionX(),
-                                                      probe.back().GetPositionY(),
-                                                      probe.back().GetPositionZ());
-                if (cachedToDest <= probeToDest)
-                {
-                    WorldPosition botPosNow(bot);
-                    lastMove.lastPath.makeShortCut(botPosNow, sPlayerbotAIConfig.reactDistance, bot);
-                    if (!lastMove.lastPath.empty())
-                    {
-                        std::vector<WorldPosition> const& pts = lastMove.lastPath.getPointPath();
-                        if (pts.size() >= 2)
-                        {
-                            Movement::PointsArray points;
-                            points.reserve(pts.size());
-                            for (auto const& wp : pts)
-                                points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
-                            return DispatchPathPoints(dest, points, "regress-keep");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Walk the chained probe's full waypoint chain via DispatchPathPoints.
-    if (!probe.empty() && probe.size() >= 2)
-    {
-        float endDistToDest = dest.GetExactDist(probe.back().GetPositionX(),
-            probe.back().GetPositionY(), probe.back().GetPositionZ());
-        if (endDistToDest + 5.0f < disToDest)
-        {
-            Movement::PointsArray points;
-            points.reserve(probe.size());
-            for (auto const& wp : probe)
-                points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
-
-            if (points.size() >= 2)
-            {
-                // Mount up if outdoors and not in combat.
-                if (!bot->IsMounted() && !bot->IsInCombat() && bot->IsOutdoors() && bot->IsAlive())
-                    botAI->DoSpecificAction("check mount state", Event(), true);
-
-                return DispatchPathPoints(dest, points, "mmap");
-            }
-        }
-    }
-
-    // Probe failed or didn't progress. Attempt straight-line MoveTo to
-    // the destination — engine PathFinder handles per-poly filtering and
-    // the bot's STEEP/water filter is honored via CreateFilter. If even
-    // that fails, the engine falls back to a direct spline.
-    if (bot->GetMapId() != dest.GetMapId())
-    {
-        EmitDebugMove("MoveFar", "cross-map",
+        EmitDebugMove("MoveFar", "no-path",
                       dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
         return false;
     }
 
-    char const* reason = (probe.empty() || probe.size() < 2) ? "mmap-empty" : "mmap-noprogress";
-    EmitDebugMove("MoveFar", reason,
-                  dest.GetPositionX(), dest.GetPositionY(),
-                  dest.GetPositionZ());
-    return MoveTo(dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(),
-                  dest.GetPositionZ(), false, false, false, false);
+    // Trim leading waypoints behind the bot, bridge with mmap probe if
+    // the new head requires it. May empty the path (collapsed) — let
+    // the next tick rebuild from a fresh start.
+    path.makeShortCut(botPos, sPlayerbotAIConfig.reactDistance, bot);
+    if (path.empty())
+        return true;
+
+    // Special head segment (portal / area-trigger / transport / flight)?
+    // UpcommingSpecialMovement cuts the path so the head is the special;
+    // HandleSpecialMovement dispatches the matching action.
+    bool const onTransport = bot->GetTransport() != nullptr;
+    if (path.UpcommingSpecialMovement(botPos,
+                                      sPlayerbotAIConfig.reactDistance,
+                                      onTransport))
+    {
+        if (HandleSpecialMovement(path))
+            return true;
+        // Special handler declined (e.g. AREA_TRIGGER with entry → caller
+        // dispatches the walk into the trigger volume). Fall through.
+    }
+
+    // Walk dispatch.
+    std::vector<WorldPosition> const& pts = path.getPointPath();
+    Movement::PointsArray points;
+    points.reserve(pts.size());
+    for (auto const& wp : pts)
+        points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
+
+    if (points.size() < 2)
+    {
+        // Single-point fallback path (cmangos pattern: ResolveMovePath
+        // emits a single dest point if nothing else worked). Hand it
+        // to the engine's MovePoint via MoveTo.
+        EmitDebugMove("MoveFar", "single-point",
+                      dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
+        return MoveTo(dest.GetMapId(), dest.GetPositionX(),
+                      dest.GetPositionY(), dest.GetPositionZ(),
+                      false, false, false, false);
+    }
+
+    if (!bot->IsMounted() && !bot->IsInCombat() &&
+        bot->IsOutdoors() && bot->IsAlive())
+        botAI->DoSpecificAction("check mount state", Event(), true);
+
+    return DispatchPathPoints(dest, points, "walk");
 }
 
 bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
