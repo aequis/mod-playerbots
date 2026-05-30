@@ -237,18 +237,19 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         }
     }
 
-    // Probe failed or didn't progress. Emit visibility whisper and bail.
-    // No straight-line fallback: dispatching a single-waypoint MoveTo
-    // here delegates to the engine's PointMovementGenerator, which on
-    // PATHFIND_NOPATH issues a straight-line spline through any terrain.
-    // That caused bots to tunnel into mountains/trees when the chained
-    // probe couldn't find a valid path. Better to return false and let
-    // the caller pick a different objective.
+    // Probe failed or didn't progress. Attempt straight-line MoveTo to
+    // the destination — engine PathFinder handles per-poly filtering and
+    // the bot's STEEP/water filter is honored via CreateFilter. If even
+    // that fails, the engine falls back to a direct spline.
+    if (bot->GetMapId() != dest.GetMapId())
+        return false;
+
     char const* reason = (probe.empty() || probe.size() < 2) ? "mmap-empty" : "mmap-noprogress";
     EmitDebugMove("MoveFar", reason,
                   dest.GetPositionX(), dest.GetPositionY(),
                   dest.GetPositionZ());
-    return false;
+    return MoveTo(dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(),
+                  dest.GetPositionZ(), false, false, false, false);
 }
 
 bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
@@ -287,52 +288,7 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
             return false;
     }
 
-    // Sparse-segment clip (cmangos parity): if any consecutive segment
-    // is longer than ~11.18y, truncate the path at that point. Short,
-    // dense waypoints reduce spline interpolation across visual
-    // obstacles between sparse points; bot re-plans from a closer
-    // position next tick.
-    {
-        constexpr float SPARSE_SEG_SQ = 125.0f;  // sqrt(125) ≈ 11.18y
-        for (size_t i = 1; i < points.size(); ++i)
-        {
-            float dx = points[i].x - points[i - 1].x;
-            float dy = points[i].y - points[i - 1].y;
-            float dz = points[i].z - points[i - 1].z;
-            if (dx * dx + dy * dy + dz * dz > SPARSE_SEG_SQ)
-            {
-                points.resize(i);
-                break;
-            }
-        }
-        if (points.size() < 2)
-            return false;
-    }
-
-    // LOS gate: reject paths whose segments pass through visual
-    // geometry. mmap is blind to M2 models (trees, decorative props)
-    // and will route through them; vmap LOS catches the cases that
-    // matter — solid trunks, walls, terrain features.
-    if (Map* map = bot->GetMap())
-    {
-        float const eye = bot->GetCollisionHeight();
-        for (size_t i = 0; i + 1 < points.size(); ++i)
-        {
-            if (!map->isInLineOfSight(points[i].x, points[i].y, points[i].z + eye,
-                                      points[i + 1].x, points[i + 1].y, points[i + 1].z + eye,
-                                      bot->GetPhaseMask(),
-                                      LINEOFSIGHT_ALL_CHECKS,
-                                      VMAP::ModelIgnoreFlags::Nothing))
-            {
-                EmitDebugMove("MoveFar", "blocked",
-                              dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
-                return false;
-            }
-        }
-    }
-
-    // Save planner output before clip/fixup so next-tick reuse sees
-    // the original intent, not a truncated tail.
+    // Save planner output for next-tick reuse.
     {
         LastMovement& lm = AI_VALUE(LastMovement&, "last movement");
         std::vector<WorldPosition> wpts;
@@ -340,26 +296,6 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
         for (auto const& pt : points)
             wpts.emplace_back(dest.GetMapId(), pt.x, pt.y, pt.z);
         lm.setPath(TravelPath(wpts));
-    }
-
-    // Underwater fixup: lift submerged waypoints to the surface,
-    // unless the destination is itself underwater.
-    if (Map* map = bot->GetMap())
-    {
-        WorldPosition destWp = dest;
-        if (!destWp.isUnderWater())
-        {
-            for (auto& pt : points)
-            {
-                WorldPosition wp(dest.GetMapId(), pt.x, pt.y, pt.z);
-                if (wp.isUnderWater())
-                {
-                    float surface = map->GetWaterLevel(pt.x, pt.y);
-                    if (surface != INVALID_HEIGHT && surface > pt.z)
-                        pt.z = surface;
-                }
-            }
-        }
     }
 
     for (auto& pt : points)
@@ -508,63 +444,23 @@ bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
     if (!map)
         return false;
 
-    // 8-angle deterministic iteration around the target. For each angle,
-    // validate the candidate against the navmesh with a strict ground-only
-    // filter (NAV_GROUND, exclude STEEP/WATER/MAGMA/SLIME). Reject if no
-    // valid poly within 5y XY+Z or if the snap drifts the Z by >10y.
-    // First angle that passes both LOS and navmesh-snap wins.
-    dtNavMeshQuery const* navMeshQuery =
-        map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
+    // 8 angles around the target, first one reachable wins. LOS check
+    // ignores M2 models (trees, decorative props) so long-distance NPCs
+    // through forested terrain still pass — the mmap probe in MoveFarTo
+    // is the authoritative reachability check.
     float const baseAngle = object->GetAngle(bot);
 
     for (float step = 0.0f; step < 2.0f * static_cast<float>(M_PI);
          step += static_cast<float>(M_PI) / 4.0f)
     {
         float const angle = baseAngle + step;
-        float x = object->GetPositionX() + std::cos(angle) * distance;
-        float y = object->GetPositionY() + std::sin(angle) * distance;
-        float z = object->GetPositionZ();
+        float const x = object->GetPositionX() + std::cos(angle) * distance;
+        float const y = object->GetPositionY() + std::sin(angle) * distance;
+        float const z = object->GetPositionZ();
 
-        // Candidate must have LOS to the GO — otherwise the bot would
-        // arrive at a spot where it can't interact (e.g., a tree stands
-        // between candidate and GO). Without this, the first angle
-        // (toward the bot) wins and lands the bot up against the
-        // obstacle instead of forcing iteration to an angle on the GO's
-        // far side from the blocker.
-        //
-        // Note: bot→candidate LOS is intentionally NOT checked. For
-        // long-distance targets (NPC across the zone, quest source
-        // 200y away) a direct line-of-sight through terrain almost
-        // always fails — bots aren't expected to see through hills.
-        // The mmap probe in MoveFarTo validates actual reachability.
-        if (!object->IsWithinLOS(x, y, z + bot->GetCollisionHeight()))
+        if (!bot->IsWithinLOS(x, y, z + bot->GetCollisionHeight(),
+                              VMAP::ModelIgnoreFlags::M2))
             continue;
-
-        // Strict navmesh-snap validation (cmangos ClosestCorrectPoint port).
-        if (navMeshQuery)
-        {
-            dtQueryFilter filter;
-            filter.setIncludeFlags(NAV_GROUND);
-            filter.setExcludeFlags(NAV_GROUND_STEEP | NAV_WATER | NAV_MAGMA | NAV_SLIME);
-
-            float const point[VERTEX_SIZE] = { y, z, x };
-            float const extents[VERTEX_SIZE] = { 5.0f, 5.0f, 5.0f };
-            float closest[VERTEX_SIZE] = { 0.0f, 0.0f, 0.0f };
-            dtPolyRef polyRef = INVALID_POLYREF;
-
-            if (!dtStatusSucceed(navMeshQuery->findNearestPoly(
-                    point, extents, &filter, &polyRef, closest)) ||
-                polyRef == INVALID_POLYREF)
-                continue;
-
-            float const snappedZ = closest[1];
-            if (std::fabs(snappedZ - z) > 10.0f)
-                continue;
-
-            x = closest[2];
-            y = closest[0];
-            z = snappedZ;
-        }
 
         return MoveFarTo(WorldPosition(object->GetMapId(), x, y, z));
     }
@@ -577,47 +473,15 @@ bool NewRpgBaseAction::MoveRandomNear(float moveStep, MovementPriority priority,
     if (IsWaitingForLastMove(priority))
         return false;
 
-    Map* map = bot->GetMap();
-    const float x = bot->GetPositionX();
-    const float y = bot->GetPositionY();
-    const float z = bot->GetPositionZ();
-    // Retry random samples so one bad roll doesn't lock the bot in place.
-    for (int attempt = 0; attempt < 8; ++attempt)
-    {
-        float distance = (0.4f + rand_norm() * 0.6f) * moveStep;
-        float angle = (float)rand_norm() * 2 * static_cast<float>(M_PI);
-        float dx = x + distance * cos(angle);
-        float dy = y + distance * sin(angle);
-        float dz = z;
+    float const distance = (0.4f + rand_norm() * 0.6f) * moveStep;
+    float const angle = (float)rand_norm() * 2 * static_cast<float>(M_PI);
+    float const dx = bot->GetPositionX() + distance * cos(angle);
+    float const dy = bot->GetPositionY() + distance * sin(angle);
+    float const dz = bot->GetPositionZ();
 
-        PathResult path = GeneratePath(dx, dy, dz, RELAXED_PATH_ACCEPT_MASK, /*forceDestination=*/false);
-
-        if (!path.reachable)
-            continue;
-
-        if (!map->CanReachPositionAndGetValidCoords(bot, dx, dy, dz))
-            continue;
-
-        if (map->IsInWater(bot->GetPhaseMask(), dx, dy, dz, bot->GetCollisionHeight()))
-            continue;
-
-        // Reject samples whose straight-line passes through visual
-        // obstacles (trees, models) that aren't in the navmesh. The
-        // smooth-path step can otherwise interpolate a waypoint inside
-        // a tree, making the bot visibly walk through it.
-        if (!bot->IsWithinLOS(dx, dy, dz))
-            continue;
-
-        bool moved = MoveTo(bot->GetMapId(), dx, dy, dz, false, false, false, true, priority);
-        if (moved)
-        {
-            EmitDebugMove("MoveRandomNear", "mmap", dx, dy, dz);
-            return true;
-        }
-    }
-
-    EmitDebugMove("MoveRandomNear", "all-fail", x, y, z);
-    return false;
+    bool moved = MoveTo(bot->GetMapId(), dx, dy, dz, false, false, false, true, priority);
+    EmitDebugMove("MoveRandomNear", moved ? "mmap" : "fail", dx, dy, dz);
+    return moved;
 }
 
 bool NewRpgBaseAction::ForceToWait(uint32 duration, MovementPriority priority)
