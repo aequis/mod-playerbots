@@ -3260,6 +3260,55 @@ bool MovementAction::GetTravelPlan(TravelPlan& plan, WorldPosition destination)
     return sTravelNodeMap.GetFullPath(plan, botPos, bot->GetZoneId(), destination, bot);
 }
 
+TravelPath MovementAction::ResolveMovePath(WorldPosition const& startPos,
+                                           WorldPosition const& endPos,
+                                           LastMovement& lastMove)
+{
+    float const totalDistance = startPos.distance(endPos);
+    float const maxDistChange = totalDistance * 0.1f;
+
+    // 10% reuse: cached path's tail close enough to new dest? Return as-is.
+    if (!lastMove.lastPath.empty() &&
+        lastMove.lastPath.getBack().distance(endPos) < maxDistChange)
+        return lastMove.lastPath;
+
+    // Long path = cross-map or beyond sight; otherwise pure mmap probe.
+    bool const needsLongPath =
+        startPos.GetMapId() != endPos.GetMapId() ||
+        totalDistance > sPlayerbotAIConfig.sightDistance;
+
+    TravelPath out;
+
+    if (needsLongPath && !sTravelNodeMap.getNodes().empty() && !bot->InBattleground())
+    {
+        // Wrap the legacy TravelPlan-populating call; the steps field on
+        // TravelPlan IS a TravelPath, so extract it directly.
+        TravelPlan tmp;
+        if (sTravelNodeMap.GetFullPath(tmp, startPos, bot->GetZoneId(), endPos, bot))
+            out = tmp.steps;
+    }
+    else
+    {
+        WorldPosition mutableStart = startPos;
+        std::vector<WorldPosition> probe = mutableStart.getPathTo(endPos, bot);
+        out.addPath(probe);
+    }
+
+    // Regression guard: if cached path's tail is no worse than the new
+    // path's tail, keep the cached one (catches probes blocked by geometry).
+    if (!lastMove.lastPath.empty() && !out.empty() &&
+        lastMove.lastPath.getBack().distance(endPos) <=
+            out.getBack().distance(endPos))
+        out = lastMove.lastPath;
+
+    // Last-ditch fallback: a single point at the destination, so the
+    // caller has at least something to dispatch.
+    if (out.empty())
+        out.addPoint(endPos);
+
+    return out;
+}
+
 bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
 {
     if (!state.IsActive())

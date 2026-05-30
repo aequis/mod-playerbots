@@ -92,6 +92,15 @@ protected:
     bool GetTravelPlan(TravelPlan& plan, WorldPosition destination);
     bool ExecuteTravelPlan(TravelPlan& state);
 
+    // Returns a unified TravelPath for the move. Mirror of the reference
+    // ResolveMovePath shape: 10% lastPath reuse short-circuit, choose
+    // graph (cross-map / >sightDistance) or live mmap probe, regression
+    // guard preferring cached path when no better, fall back to a
+    // single-point path on dest. Stateless — does not dispatch.
+    TravelPath ResolveMovePath(WorldPosition const& startPos,
+                               WorldPosition const& endPos,
+                               LastMovement& lastMove);
+
     // Transport boarding helpers (shared by FollowAction and travel plan)
     static Transport* GetTransportForPosTolerant(Map* map, WorldObject* ref,
         uint32 phaseMask, float x, float y, float z);
