@@ -3106,6 +3106,18 @@ bool MovementAction::WaitForTransport()
         return false;
     }
 
+    // Mid-ride only when the cached path head is still the boarded
+    // transport node. If the head moved (next tick's resolution shifted
+    // it off, or we cut to a disembark point), let MoveFarTo continue
+    // so HandleSpecialMovement can dispatch the disembark.
+    if (lastMove.lastPath.empty())
+        return false;
+
+    PathNodePoint const& front = lastMove.lastPath[0];
+    if (front.type != PathNodeType::NODE_TRANSPORT ||
+        front.entry != lastMove.lastTransportEntry)
+        return false;
+
     return true;
 }
 
@@ -3171,9 +3183,27 @@ bool MovementAction::HandleSpecialMovement(TravelPath& path)
 
         case PathNodeType::NODE_TRANSPORT:
         {
-            // Mid-transport: caller's WaitForTransport keeps the bot
-            // riding. Nothing to dispatch here.
-            return false;
+            // Disembark: head is a transport node and bot is on one.
+            // Remove passenger + teleport to the next-step world position
+            // (cmangos uses UseTransport with current→next teleport here;
+            // our equivalent is RemovePassenger + TeleportTo).
+            if (!hasNext)
+                return false;
+
+            Transport* transport = bot->GetTransport();
+            if (!transport)
+                return false;
+
+            PathNodePoint const& dst = path[1];
+            transport->RemovePassenger(bot);
+            bot->StopMovingOnCurrentPos();
+            bool const teleported = bot->TeleportTo(dst.point.GetMapId(),
+                                                    dst.point.GetPositionX(),
+                                                    dst.point.GetPositionY(),
+                                                    dst.point.GetPositionZ(),
+                                                    bot->GetOrientation());
+            AI_VALUE(LastMovement&, "last movement").lastTransportEntry = 0;
+            return teleported;
         }
 
         default:
