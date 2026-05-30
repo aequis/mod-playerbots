@@ -3309,6 +3309,166 @@ TravelPath MovementAction::ResolveMovePath(WorldPosition const& startPos,
     return out;
 }
 
+bool MovementAction::WaitForTransport()
+{
+    LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+    if (!lastMove.lastTransportEntry)
+        return false;
+
+    Transport* transport = bot->GetTransport();
+    if (!transport || transport->GetEntry() != lastMove.lastTransportEntry)
+    {
+        lastMove.lastTransportEntry = 0;
+        return false;
+    }
+
+    return true;
+}
+
+bool MovementAction::HandleSpecialMovement(TravelPath& path)
+{
+    if (path.empty())
+        return false;
+
+    PathNodePoint const& cur = path[0];
+    bool const hasNext = path.size() > 1;
+
+    // Head is special — dispatch based on the head segment's type.
+    switch (cur.type)
+    {
+        case PathNodeType::NODE_STATIC_PORTAL:
+        {
+            if (!cur.entry)
+                return false;
+
+            if (bot->IsMounted())
+                bot->Dismount();
+            botAI->RemoveShapeshift();
+
+            GuidVector nearGOs = AI_VALUE(GuidVector, "nearest game objects");
+            for (ObjectGuid const& guid : nearGOs)
+            {
+                GameObject* go = botAI->GetGameObject(guid);
+                if (!go || go->GetEntry() != cur.entry)
+                    continue;
+                if (!bot->GetGameObjectIfCanInteractWith(guid, GAMEOBJECT_TYPE_SPELLCASTER))
+                    continue;
+
+                WorldPacket packet(CMSG_GAMEOBJ_USE);
+                packet << guid;
+                bot->GetSession()->QueuePacket(new WorldPacket(packet));
+                return true;
+            }
+            return false;
+        }
+
+        case PathNodeType::NODE_AREA_TRIGGER:
+        {
+            if (cur.entry)
+            {
+                // Marker for the trigger we're walking into; server-side
+                // collision handles the actual teleport. Caller still
+                // dispatches the walk this tick.
+                AI_VALUE(LastMovement&, "last movement").lastAreaTrigger = cur.entry;
+                return false;
+            }
+            // No entry: direct teleport to next-point destination.
+            if (hasNext)
+            {
+                PathNodePoint const& dst = path[1];
+                return bot->TeleportTo(dst.point.GetMapId(),
+                                       dst.point.GetPositionX(),
+                                       dst.point.GetPositionY(),
+                                       dst.point.GetPositionZ(),
+                                       bot->GetOrientation());
+            }
+            return false;
+        }
+
+        case PathNodeType::NODE_TRANSPORT:
+        {
+            // Mid-transport: caller's WaitForTransport keeps the bot
+            // riding. Nothing to dispatch here.
+            return false;
+        }
+
+        default:
+            break;
+    }
+
+    // Head not special — check next-step for board/taxi handlers.
+    if (!hasNext)
+        return false;
+
+    PathNodePoint const& next = path[1];
+    switch (next.type)
+    {
+        case PathNodeType::NODE_TRANSPORT:
+        {
+            if (!next.entry)
+                return false;
+            Map* map = bot->GetMap();
+            if (!map)
+                return false;
+            Transport* transport = GetTransportForPosTolerant(
+                map, bot, bot->GetPhaseMask(),
+                next.point.GetPositionX(),
+                next.point.GetPositionY(),
+                next.point.GetPositionZ());
+            if (!transport || transport->GetEntry() != next.entry)
+                return false;
+            if (BoardTransport(transport))
+            {
+                AI_VALUE(LastMovement&, "last movement").lastTransportEntry = next.entry;
+                return true;
+            }
+            return false;
+        }
+
+        case PathNodeType::NODE_FLIGHTPATH:
+        {
+            if (!next.entry)
+                return false;
+
+            TravelMgr::FlightMasterInfo const* fmInfo =
+                sTravelMgr.GetNearestFlightMasterInfo(bot);
+            if (!fmInfo)
+                return false;
+
+            ObjectGuid fmGuid = ObjectGuid::Create<HighGuid::Unit>(
+                fmInfo->templateEntry, fmInfo->dbGuid);
+            Creature* flightMaster = ObjectAccessor::GetCreature(*bot, fmGuid);
+            if (!flightMaster || !flightMaster->IsAlive())
+                return false;
+
+            uint32 fromTaxi = sObjectMgr->GetNearestTaxiNode(
+                cur.point.GetPositionX(), cur.point.GetPositionY(),
+                cur.point.GetPositionZ(), cur.point.GetMapId(),
+                bot->GetTeamId());
+            uint32 toTaxi = sObjectMgr->GetNearestTaxiNode(
+                next.point.GetPositionX(), next.point.GetPositionY(),
+                next.point.GetPositionZ(), next.point.GetMapId(),
+                bot->GetTeamId());
+            if (!fromTaxi || !toTaxi || fromTaxi == toTaxi)
+                return false;
+
+            std::vector<uint32> route = sTravelNodeMap.FindTaxiPath(fromTaxi, toTaxi);
+            if (route.empty())
+                return false;
+
+            botAI->RemoveShapeshift();
+            if (bot->IsMounted())
+                bot->Dismount();
+
+            return bot->ActivateTaxiPathTo(route, flightMaster, 0);
+        }
+
+        // NODE_TELEPORT consumer not yet re-added; falls through.
+        default:
+            return false;
+    }
+}
+
 bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
 {
     if (!state.IsActive())

@@ -101,6 +101,22 @@ protected:
                                WorldPosition const& endPos,
                                LastMovement& lastMove);
 
+    // Dispatches the head-of-path special segment (portal interact /
+    // area-trigger marker / transport boarding / flight master taxi).
+    // Caller is expected to first call TravelPath::UpcommingSpecialMovement
+    // which cuts the path so the head is the special segment. Returns
+    // true if a movement-consuming action was dispatched this tick.
+    // Returns false for AREA_TRIGGER-with-entry (caller still dispatches
+    // the walk into the trigger volume).
+    bool HandleSpecialMovement(TravelPath& path);
+
+    // Top-of-MoveFarTo gate that keeps a bot riding a transport across
+    // ticks. Returns true if the bot is still on the transport we last
+    // boarded (caller should skip the rest of MoveFarTo this tick).
+    // Clears lastTransportEntry and returns false if the bot has
+    // disembarked or is no longer on the expected transport.
+    bool WaitForTransport();
+
     // Transport boarding helpers (shared by FollowAction and travel plan)
     static Transport* GetTransportForPosTolerant(Map* map, WorldObject* ref,
         uint32 phaseMask, float x, float y, float z);
