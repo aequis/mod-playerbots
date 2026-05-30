@@ -375,17 +375,14 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
         }
     }
 
-    // Match master's walk pace when they're nearby and walking.
+    // Match master's walk pace when they're walking and within 5y.
     ForcedMovement moveMode = FORCED_MOVEMENT_RUN;
-    if (sPlayerbotAIConfig.walkDistance > 0.0f)
+    if (Player* master = botAI->GetMaster())
     {
-        if (Player* master = botAI->GetMaster())
+        if (bot->IsFriendlyTo(master) && master->IsWalking() &&
+            bot->GetExactDist2d(master) < 5.0f)
         {
-            if (bot->IsFriendlyTo(master) && master->IsWalking() &&
-                bot->GetExactDist2d(master) < sPlayerbotAIConfig.walkDistance)
-            {
-                moveMode = FORCED_MOVEMENT_WALK;
-            }
+            moveMode = FORCED_MOVEMENT_WALK;
         }
     }
 
