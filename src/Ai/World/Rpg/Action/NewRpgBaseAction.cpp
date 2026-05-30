@@ -383,7 +383,7 @@ bool NewRpgBaseAction::TakeFlight(std::vector<uint32> const& taxiNodes, Creature
 
     LOG_DEBUG("playerbots", "[New RPG] Bot {} taking flight ({} nodes, {} to {})",
               bot->GetName(), taxiNodes.size(), taxiNodes.front(), taxiNodes.back());
-    EmitDebugMove("TravelPlan:flight", "taxi", flightMaster->GetPositionX(), flightMaster->GetPositionY(),
+    EmitDebugMove("Flight:taxi", "taxi", flightMaster->GetPositionX(), flightMaster->GetPositionY(),
                   flightMaster->GetPositionZ());
     return true;
 }

@@ -3337,7 +3337,7 @@ bool MovementAction::BoardTransport(Transport* transport)
     {
         transport->AddPassenger(bot, true);
         bot->StopMovingOnCurrentPos();
-        EmitDebugMove("TravelPlan:transport-board", "teleport", transport->GetPositionX(),
+        EmitDebugMove("Transport:board", "teleport", transport->GetPositionX(),
                       transport->GetPositionY(), transport->GetPositionZ());
         return true;
     }
@@ -3363,7 +3363,7 @@ bool MovementAction::BoardTransport(Transport* transport)
             bot->SetStandState(UNIT_STAND_STATE_STAND);
 
         mm->MovePoint(0, destX, destY, destZ, FORCED_MOVEMENT_NONE, 0.0f, 0.0f, false, false);
-        EmitDebugMove("TravelPlan:transport-walk", "spline", destX, destY, destZ);
+        EmitDebugMove("Transport:walk", "spline", destX, destY, destZ);
     }
 
     return false;

@@ -41,7 +41,6 @@ void LastMovement::clear()
     lastFlee = 0;
     nextTeleport = 0;
     msTime = 0;
-    lastdelayTime = 0;
     priority = MovementPriority::MOVEMENT_NORMAL;
     lastTransportEntry = 0;
 }
@@ -64,7 +63,6 @@ void LastMovement::Set(uint32 mapId, float x, float y, float z, float ori, float
     lastFollow = nullptr;
     lastMoveShort = WorldPosition(mapId, x, y, z, ori);
     msTime = getMSTime();
-    lastdelayTime = delayTime;
     priority = pri;
 }
 

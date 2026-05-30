@@ -61,7 +61,6 @@ public:
     float lastMoveToY;
     float lastMoveToZ;
     float lastMoveToOri;
-    float lastdelayTime;
     WorldPosition lastMoveShort;
     uint32 msTime;
     MovementPriority priority;
