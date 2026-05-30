@@ -1290,8 +1290,33 @@ bool TravelNodeMap::GetFullPath(TravelPlan& plan,
     if (route.isEmpty())
         return false;
 
+    WorldPosition startNodePos = *startNode->getPosition();
+    WorldPosition endNodePos = *endNode->getPosition();
+
+    // pathToStart: mmap-path from bot to the first node — without this
+    // the executor's NODE_PREPATH walks a 2-point straight line and can
+    // tunnel through terrain to reach the first node.
     std::vector<WorldPosition> pathToStart = {botPos};
+    if (bot && botPos.GetMapId() == startNodePos.GetMapId())
+    {
+        std::vector<WorldPosition> probe = botPos.getPathTo(startNodePos, bot);
+        if (probe.size() >= 2)
+            pathToStart = probe;
+    }
+
+    // pathToEnd: mmap-path from the last node to the destination — without
+    // this the route ends at lastNode and the bot stops short of dest.
+    // Cross-map case: bot can't mmap-query the destination map; the
+    // single-point fallback gets re-resolved per-tick once bot crosses.
     std::vector<WorldPosition> pathToEnd = {destination};
+    if (bot && botPos.GetMapId() == endNodePos.GetMapId() &&
+        botPos.GetMapId() == destination.GetMapId())
+    {
+        std::vector<WorldPosition> probe = endNodePos.getPathTo(destination, bot);
+        if (probe.size() >= 2)
+            pathToEnd = probe;
+    }
+
     plan.steps = route.BuildPath(pathToStart, pathToEnd, nullptr);
 
     return !plan.steps.empty();
