@@ -158,44 +158,8 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
     if (points.size() < 2)
         return false;
 
-    // Prefix trim (cmangos parity: makeShortCut on every dispatch).
-    // Drop leading waypoints behind the bot's current position so the
-    // spline begins from where the bot actually is, not from a stale
-    // planner-start. Picks the waypoint closest to the bot in 3D and
-    // erases everything before it.
-    {
-        float const bx = bot->GetPositionX();
-        float const by = bot->GetPositionY();
-        float const bz = bot->GetPositionZ();
-        float minSq = std::numeric_limits<float>::max();
-        size_t closest = 0;
-        for (size_t i = 0; i < points.size(); ++i)
-        {
-            float dx = points[i].x - bx;
-            float dy = points[i].y - by;
-            float dz = points[i].z - bz;
-            float sq = dx * dx + dy * dy + dz * dz;
-            if (sq < minSq)
-            {
-                minSq = sq;
-                closest = i;
-            }
-        }
-        if (closest > 0)
-            points.erase(points.begin(), points.begin() + closest);
-        if (points.size() < 2)
-            return false;
-    }
-
-    // Save planner output for next-tick reuse.
-    {
-        LastMovement& lm = AI_VALUE(LastMovement&, "last movement");
-        std::vector<WorldPosition> wpts;
-        wpts.reserve(points.size());
-        for (auto const& pt : points)
-            wpts.emplace_back(dest.GetMapId(), pt.x, pt.y, pt.z);
-        lm.setPath(TravelPath(wpts));
-    }
+    // MoveFarTo runs makeShortCut + setPath upstream now, so no need
+    // for the local prefix-trim or lastMove.setPath here.
 
     for (auto& pt : points)
         bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
