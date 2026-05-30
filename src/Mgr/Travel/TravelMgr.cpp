@@ -720,9 +720,10 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
 
     PathGenerator path(pathUnit);
     // Source is a temp Creature, so CreateFilter's bot block doesn't
-    // fire — apply the same bot rules here so generated paths match
-    // what bots can actually walk at runtime.
-    path.SetExcludeFlags(NAV_GROUND_STEEP);
+    // fire — apply the same bot cost biases here so generated paths
+    // match what bots prefer at runtime (STEEP/water are reachable
+    // but not preferred).
+    path.SetNavTerrainCost(NAV_GROUND_STEEP, 5.0f);
     path.SetNavTerrainCost(NAV_WATER, 10.0f);
     auto result = getPathStepFrom(startPos, path);
 
@@ -857,8 +858,8 @@ std::vector<WorldPosition> WorldPosition::getPathFromPath(std::vector<WorldPosit
 
     PathGenerator path(pathUnit);
     // Same reason as getPathStepFrom: temp-Creature source doesn't trip
-    // CreateFilter's bot block, so apply the bot rules manually.
-    path.SetExcludeFlags(NAV_GROUND_STEEP);
+    // CreateFilter's bot block, so apply the bot cost biases manually.
+    path.SetNavTerrainCost(NAV_GROUND_STEEP, 5.0f);
     path.SetNavTerrainCost(NAV_WATER, 10.0f);
 
     // Limit the pathfinding attempts
