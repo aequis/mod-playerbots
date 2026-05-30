@@ -562,8 +562,17 @@ bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
         float y = object->GetPositionY() + std::sin(angle) * distance;
         float z = object->GetPositionZ();
 
-        // LOS check at eye height.
+        // LOS check at eye height — bot must be able to reach the candidate.
         if (!bot->IsWithinLOS(x, y, z + bot->GetCollisionHeight()))
+            continue;
+
+        // Candidate must also have LOS to the GO itself — otherwise the
+        // bot arrives at a spot where it can't interact (e.g., a tree
+        // stands between candidate and GO). Without this, the very first
+        // angle (toward the bot) wins and lands the bot up against the
+        // obstacle instead of forcing iteration to an angle on the GO's
+        // far side from the blocker.
+        if (!object->IsWithinLOS(x, y, z + bot->GetCollisionHeight()))
             continue;
 
         // Strict navmesh-snap validation (cmangos ClosestCorrectPoint port).
