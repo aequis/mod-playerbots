@@ -1423,9 +1423,7 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
 bool MovementAction::ChaseTo(WorldObject* obj, float distance)
 {
     if (!IsMovingAllowed())
-    {
         return false;
-    }
 
     if (obj)
         EmitDebugMove("ChaseTo", "chase", obj->GetPositionX(), obj->GetPositionY(), obj->GetPositionZ());
@@ -1435,8 +1433,6 @@ bool MovementAction::ChaseTo(WorldObject* obj, float distance)
         VehicleSeatEntry const* seat = vehicle->GetSeatForPassenger(bot);
         if (!seat || !seat->CanControl())
             return false;
-
-        // vehicle->GetMotionMaster()->Clear();
         vehicle->GetBase()->GetMotionMaster()->MoveChase((Unit*)obj, 30.0f);
         return true;
     }
@@ -1452,10 +1448,34 @@ bool MovementAction::ChaseTo(WorldObject* obj, float distance)
         botAI->InterruptSpell();
     }
 
-    // bot->GetMotionMaster()->Clear();
-    bot->GetMotionMaster()->MoveChase((Unit*)obj, distance);
+    // Try a chained mmap probe first — for targets behind obstacles
+    // this routes the bot around terrain instead of straight-charging
+    // into a wall. Falls back to engine MoveChase for short/clear
+    // chases where target tracking matters more than path routing.
+    float const targetDist = bot->GetExactDist(obj);
+    if (targetDist > distance + 3.0f)
+    {
+        float const angle = obj->GetAngle(bot);
+        float x = obj->GetPositionX();
+        float y = obj->GetPositionY();
+        float z = obj->GetPositionZ();
+        obj->GetNearPoint(bot, x, y, z, bot->GetObjectSize(), distance, angle);
 
-    // TODO shouldnt this use "last movement" value?
+        PathGenerator path(bot);
+        path.CalculatePath(x, y, z, false);
+        PathType type = path.GetPathType();
+        if ((type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE | PATHFIND_SHORTCUT)) &&
+            path.GetPath().size() >= 2)
+        {
+            Movement::PointsArray points = path.GetPath();
+            bot->GetMotionMaster()->Clear();
+            bot->GetMotionMaster()->MoveSplinePath(&points, FORCED_MOVEMENT_RUN);
+            WaitForReach(targetDist - distance);
+            return true;
+        }
+    }
+
+    bot->GetMotionMaster()->MoveChase((Unit*)obj, distance);
     WaitForReach(bot->GetExactDist2d(obj) - distance);
     return true;
 }
