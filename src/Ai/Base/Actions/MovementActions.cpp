@@ -3533,7 +3533,7 @@ bool MovementAction::ExecuteTravelPlan(TravelPlan& state)
                 GameObject* go = botAI->GetGameObject(guid);
                 if (!go || go->GetEntry() != portal.entry)
                     continue;
-                if (!bot->GetGameObjectIfCanInteractWith(guid, MAX_GAMEOBJECT_TYPE))
+                if (!bot->GetGameObjectIfCanInteractWith(guid, GAMEOBJECT_TYPE_SPELLCASTER))
                     continue;
 
                 WorldPacket packet(CMSG_GAMEOBJ_USE);
