@@ -83,9 +83,6 @@ protected:
     bool CheckRpgStatusAvailable(NewRpgStatus status);
 
 private:
-    void StartTravelPlan(WorldPosition dest);
-    bool UpdateTravelPlan();
-
     // Centralized dispatch helper. Applies underwater fixup, ClipPath
     // (truncate at first hostile in attack range with LOS, level+5 cap),
     // inactive-bot teleport (with self-bot carve-out), masterWalking

@@ -162,22 +162,6 @@ void MovementAction::EmitDebugMove(char const* method, char const* generator, fl
         default: break;
     }
 
-    // Travel-plan override: when actively routing through the node
-    // graph, prefer the next-hop node name over any RPG-level target.
-    if (info.HasActiveTravelPlan())
-    {
-        TravelPlan const& plan = info.travelPlan;
-        if (plan.stepIdx < plan.steps.GetPathRef().size())
-        {
-            PathNodePoint const& pnt = plan.steps.GetPathRef()[plan.stepIdx];
-            if (pnt.type == PathNodeType::NODE_NODE || pnt.type == PathNodeType::NODE_PATH)
-            {
-                if (TravelNode* n = sTravelNodeMap.getNode(pnt.point, nullptr, 5.0f))
-                    targetName = "node:" + n->getName();
-            }
-        }
-    }
-
     float dis = bot->GetExactDist(x, y, z);
     std::ostringstream out;
     out << "[M] | " << method

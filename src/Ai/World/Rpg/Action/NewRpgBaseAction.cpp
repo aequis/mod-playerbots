@@ -306,24 +306,6 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
     return true;
 }
 
-void NewRpgBaseAction::StartTravelPlan(WorldPosition dest)
-{
-    TravelPlan& plan = botAI->rpgInfo.travelPlan;
-    GetTravelPlan(plan, dest);
-}
-
-bool NewRpgBaseAction::UpdateTravelPlan()
-{
-    TravelPlan& plan = botAI->rpgInfo.travelPlan;
-
-    bool result = ExecuteTravelPlan(plan);
-
-    if (!plan.IsActive())
-        botAI->rpgInfo.ClearTravel();
-
-    return result;
-}
-
 bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
 {
     WorldObject* object = botAI->GetWorldObject(guid);
