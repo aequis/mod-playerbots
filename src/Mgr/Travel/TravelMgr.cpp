@@ -723,6 +723,13 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     // fire — apply the same bot cost biases here so generated paths
     // match what bots prefer at runtime (STEEP/water are reachable
     // but not preferred).
+    //
+    // Reference also applies setAreaCost(12, 5) + setAreaCost(13, 20)
+    // here. Not ported: reference and AC use different mmap generators
+    // and Detour area-id assignments diverge — raw IDs 12/13 are
+    // unlikely to match any polys on AC's navmesh and could no-op or
+    // bias something unintended. If we ever regenerate mmaps to match
+    // the reference dataset, revisit.
     path.SetNavTerrainCost(NAV_GROUND_STEEP, 5.0f);
     path.SetNavTerrainCost(NAV_WATER, 10.0f);
     auto result = getPathStepFrom(startPos, path);
