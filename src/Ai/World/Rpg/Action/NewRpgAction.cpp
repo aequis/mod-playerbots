@@ -155,11 +155,17 @@ bool NewRpgGoGrindAction::Execute(Event /*event*/)
     if (auto* data = std::get_if<NewRpgInfo::GoGrind>(&botAI->rpgInfo.data))
     {
         if (MoveFarTo(data->pos))
+        {
+            botAI->rpgInfo.moveRetryCount = 0;
             return true;
-        // Small nudge so the next tick's MoveFarTo starts from a
-        // slightly different position. Kept small so it doesn't look
-        // like the bot is abandoning its destination.
-        return MoveRandomNear(10.0f);
+        }
+        // Reference pattern (TravelTarget retry counter): count
+        // consecutive MoveFarTo failures, give up after N tries by
+        // transitioning out of the stuck state instead of nudging in
+        // place. Idle lets the status picker rotate to a new state.
+        if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
+            botAI->rpgInfo.ChangeToIdle();
+        return true;  // consume tick, no nudge
     }
 
     return false;
@@ -173,8 +179,13 @@ bool NewRpgGoCampAction::Execute(Event /*event*/)
     if (auto* data = std::get_if<NewRpgInfo::GoCamp>(&botAI->rpgInfo.data))
     {
         if (MoveFarTo(data->pos))
+        {
+            botAI->rpgInfo.moveRetryCount = 0;
             return true;
-        return MoveRandomNear(10.0f);
+        }
+        if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
+            botAI->rpgInfo.ChangeToIdle();
+        return true;
     }
 
     return false;
@@ -230,11 +241,20 @@ bool NewRpgWanderNpcAction::Execute(Event /*event*/)
     else
     {
         if (MoveWorldObjectTo(data.npcOrGo))
+        {
+            botAI->rpgInfo.moveRetryCount = 0;
             return true;
-        // NPC pathing failed (random offset in a wall, mmap hiccup, etc).
-        // Take a small random step so the next tick retries from a
-        // different spot instead of staring at the NPC from afar.
-        return MoveRandomNear(15.0f);
+        }
+        // Retry counter (reference pattern): give up after N failures
+        // by clearing the picked NPC so next tick picks a different
+        // one. No nudge — stand still until retry.
+        if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
+        {
+            data.npcOrGo = ObjectGuid();
+            data.lastReach = 0;
+            botAI->rpgInfo.moveRetryCount = 0;
+        }
+        return true;
     }
 
     return true;
@@ -350,9 +370,16 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
         // class strategy handles it.
 
         if (MoveFarTo(data.pos))
+        {
+            botAI->rpgInfo.moveRetryCount = 0;
             return true;
-        // sampler found nothing — nudge so next tick tries a new pos
-        return MoveRandomNear(10.0f);
+        }
+        // Retry counter (reference pattern): on N consecutive
+        // failures, drop this objective and go idle so the picker can
+        // try another quest / state.
+        if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
+            botAI->rpgInfo.ChangeToIdle();
+        return true;
     }
     // Now we are near the quest objective
     // kill mobs and looting quest should be done automatically by grind strategy
@@ -551,8 +578,16 @@ bool NewRpgDoQuestAction::DoCompletedQuest(NewRpgInfo::DoQuest& data)
     if (bot->GetDistance(data.pos) > 10.0f && !data.lastReachPOI)
     {
         if (MoveFarTo(data.pos))
+        {
+            botAI->rpgInfo.moveRetryCount = 0;
             return true;
-        return MoveRandomNear(10.0f);
+        }
+        // Retry counter (reference pattern): mark quest as abandoned
+        // if turn-in POI is unreachable repeatedly so the bot doesn't
+        // sit on a broken handler.
+        if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
+            botAI->rpgInfo.ChangeToIdle();
+        return true;
     }
 
     // Now we are near the qoi of reward

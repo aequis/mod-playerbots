@@ -78,6 +78,14 @@ struct NewRpgInfo
 
     uint32 startT{0};  // start timestamp of the current status
 
+    // Counts consecutive MoveFarTo failures for the current state.
+    // Reset on every status change (via Reset) and on every successful
+    // MoveFarTo. When it crosses MAX_MOVE_RETRIES the failing action
+    // gives up and transitions out of the current state instead of
+    // sitting on a stuck objective forever.
+    uint8 moveRetryCount{0};
+    static constexpr uint8 MAX_MOVE_RETRIES = 10;
+
     using RpgData = std::variant<
         Idle,
         GoGrind,

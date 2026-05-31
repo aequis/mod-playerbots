@@ -77,6 +77,7 @@ void NewRpgInfo::Reset()
 {
     data = Idle{};
     startT = getMSTime();
+    moveRetryCount = 0;
 }
 
 NewRpgStatus NewRpgInfo::GetStatus()
