@@ -1512,7 +1512,7 @@ TravelNodeRoute TravelNodeMap::FindRouteNearestNodes(WorldPosition startPos, Wor
     return TravelNodeRoute();
 }
 
-TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos, [[maybe_unused]] uint32 botZoneId,
+TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos,
     WorldPosition destination, Unit* bot)
 {
     TravelPath path;

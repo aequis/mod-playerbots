@@ -714,7 +714,7 @@ public:
     // Resolve a full TravelPath from botPos to destination. Returns an
     // empty TravelPath if no graph route + mmap stitch is reachable;
     // the caller is then expected to fall back to a single-point path.
-    TravelPath GetFullPath(WorldPosition botPos, uint32 botZoneId,
+    TravelPath GetFullPath(WorldPosition botPos,
         WorldPosition destination, Unit* bot = nullptr);
 
     // Resolve A* route between two world positions (returns node vector)

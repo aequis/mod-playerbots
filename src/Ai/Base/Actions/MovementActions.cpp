@@ -214,26 +214,28 @@ bool MovementAction::MoveNear(WorldObject* target, float distance, MovementPrior
     if (!target)
         return false;
 
-    // Reference uses bounding radius (collision footprint), not combat
-    // reach (which is wider for big mobs). Bounding radius lands the bot
-    // at the requested standoff from the model edge, not arbitrarily far.
-    distance += target->GetObjectSize();
-
-    float followAngle = GetFollowAngle();
+    float const followAngle = GetFollowAngle();
+    float const followRange = botAI->GetRange("follow");
 
     for (float angle = followAngle; angle <= followAngle + static_cast<float>(2 * M_PI);
          angle += static_cast<float>(M_PI / 4.f))
     {
-        float x = target->GetPositionX() + cos(angle) * distance;
-        float y = target->GetPositionY() + sin(angle) * distance;
+        // GetNearPoint is engine-aware: snaps to walkable terrain,
+        // avoids collision geometry, clamps Z. Drops the raw cos/sin
+        // offset that could land the bot inside walls or on ledges.
+        // Matches the reference's MoveNear shape.
+        float x = target->GetPositionX();
+        float y = target->GetPositionY();
         float z = target->GetPositionZ();
-        // Clamp Z to the terrain under the offset point so we don't
-        // hand PointMovementGenerator a Z that matches the target's
-        // floor but not the sampled (x,y) — avoids straight-line
-        // fallbacks through geometry.
-        bot->UpdateAllowedPositionZ(x, y, z);
+        float const dist = distance + target->GetObjectSize();
+        target->GetNearPoint(bot, x, y, z, bot->GetObjectSize(),
+                             std::min(dist, followRange), angle);
 
-        if (!bot->IsWithinLOS(x, y, z))
+        // LOS test at eye-level (collision-height above feet) ignoring
+        // M2 models — large M2 trees/canopies otherwise block the test
+        // even when the bot can walk to the spot.
+        if (!bot->IsWithinLOS(x, y, z + bot->GetCollisionHeight(),
+                              VMAP::ModelIgnoreFlags::M2))
             continue;
 
         bool moved = MoveTo(target->GetMapId(), x, y, z, false, false, false, false, priority);
@@ -696,6 +698,14 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
 
     UpdateMovementState();
 
+    // Cross-transport follow: if bot and target are on different
+    // transports (or only one is on a transport) and within sight,
+    // disembark/teleport/board to match. Handled here before the
+    // distance gates so a bot on a stationary boat following a
+    // master who just boarded doesn't get stuck at "no need to follow".
+    if (FollowOnTransport(target))
+        return true;
+
     if (!bot->InBattleground() && ServerFacade::instance().IsDistanceLessOrEqualThan(ServerFacade::instance().GetDistance2d(bot, target),
                                                                            sPlayerbotAIConfig.followDistance))
     {
@@ -813,6 +823,42 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
 
     EmitDebugMove("Follow", "follow", target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
     bot->GetMotionMaster()->MoveFollow(target, distance, angle);
+    return true;
+}
+
+bool MovementAction::FollowOnTransport(Unit* target)
+{
+    if (!target)
+        return false;
+
+    bool const onDifferentTransports =
+        bot->m_movementInfo.transport.guid != target->m_movementInfo.transport.guid;
+    if (!onDifferentTransports)
+        return false;
+
+    if (!ServerFacade::instance().IsDistanceLessOrEqualThan(
+            ServerFacade::instance().GetDistance2d(bot, target),
+            sPlayerbotAIConfig.sightDistance))
+        return false;
+
+    bot->StopMoving();
+
+    // Disembark from our current transport (if any) before relocating.
+    if (Transport* myTransport = bot->GetTransport())
+        myTransport->RemovePassenger(bot);
+
+    // NearTeleportTo is the AC equivalent of cmangos's Relocate+
+    // SendHeartBeat sequence: it relocates the bot AND broadcasts the
+    // movement update so server-side state stays consistent.
+    bot->NearTeleportTo(target->GetPositionX(),
+                        target->GetPositionY(),
+                        target->GetPositionZ(),
+                        bot->GetOrientation());
+
+    // Board target's transport (if any).
+    if (Transport* hisTransport = target->GetTransport())
+        hisTransport->AddPassenger(bot);
+
     return true;
 }
 
@@ -2530,7 +2576,7 @@ TravelPath MovementAction::ResolveMovePath(WorldPosition startPos,
 
     if (needsLongPath && !sTravelNodeMap.getNodes().empty() && !bot->InBattleground())
     {
-        out = sTravelNodeMap.GetFullPath(startPos, bot->GetZoneId(), endPos, bot);
+        out = sTravelNodeMap.GetFullPath(startPos, endPos, bot);
     }
     else
     {

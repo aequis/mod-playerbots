@@ -111,6 +111,14 @@ protected:
     float GetFollowAngle();
     bool Follow(Unit* target, float distance = sPlayerbotAIConfig.followDistance);
     bool Follow(Unit* target, float distance, float angle);
+    // Handles the cross-transport follow case: when bot and target are
+    // on different transports (or one is off-transport) and within
+    // sight, this disembarks the bot from its current transport (if
+    // any), teleports it to the target's position, and boards the
+    // target's transport (if any). Returns true if the transport
+    // transition was performed this tick (caller should skip the
+    // engine-level follow for this tick).
+    bool FollowOnTransport(Unit* target);
     bool ChaseTo(WorldObject* obj, float distance = 0.0f);
     bool ReachCombatTo(Unit* target, float distance = 0.0f);
     float MoveDelay(float distance, bool backwards = false);
