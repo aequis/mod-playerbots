@@ -19,7 +19,6 @@ class Unit;
 class WorldObject;
 class Position;
 
-#define ANGLE_45_DEG (static_cast<float>(M_PI) / 4.f)
 #define ANGLE_90_DEG M_PI_2
 #define ANGLE_120_DEG (2.f * static_cast<float>(M_PI) / 3.f)
 

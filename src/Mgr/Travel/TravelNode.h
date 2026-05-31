@@ -696,9 +696,6 @@ public:
     void saveNodeStore();
     void LoadNodeStore();
 
-    bool cropUselessNode(TravelNode* startNode);
-    TravelNode* addZoneLinkNode(TravelNode* startNode);
-    TravelNode* addRandomExtNode(TravelNode* startNode);
 
     void calcMapOffset();
     WorldPosition getMapOffset(uint32 mapId);
