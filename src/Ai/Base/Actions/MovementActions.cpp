@@ -43,7 +43,6 @@
 #include "Timer.h"
 #include "Transport.h"
 #include "Unit.h"
-#include "Vehicle.h"
 #include "WaypointMovementGenerator.h"
 
 MovementAction::MovementAction(PlayerbotAI* botAI, std::string const name) : Action(botAI, name)
@@ -314,31 +313,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
     bool disableMoveSplinePath =
         sPlayerbotAIConfig.disableMoveSplinePath >= 2 ||
         (sPlayerbotAIConfig.disableMoveSplinePath == 1 && bot->InBattleground());
-    if (Vehicle* vehicle = bot->GetVehicle())
-    {
-        VehicleSeatEntry const* seat = vehicle->GetSeatForPassenger(bot);
-        Unit* vehicleBase = vehicle->GetBase();
-        generatePath = !vehicleBase || !vehicleBase->CanFly();
-        if (!vehicleBase || !seat || !seat->CanControl())  // is passenger and cant move anyway
-            return false;
-
-        float distance = vehicleBase->GetExactDist(x, y, z);  // use vehicle distance, not bot
-        if (distance > 0.01f)
-        {
-            DoMovePoint(vehicleBase, x, y, z, generatePath, backwards);
-            float speed = backwards ? vehicleBase->GetSpeed(MOVE_RUN_BACK) : vehicleBase->GetSpeed(MOVE_RUN);
-            float delay = 1000.0f * (distance / speed);
-            if (lessDelay)
-            {
-                delay -= botAI->GetReactDelay();
-            }
-            delay = std::max(.0f, delay);
-            delay = std::min((float)sPlayerbotAIConfig.maxWaitForMove, delay);
-            AI_VALUE(LastMovement&, "last movement").Set(mapId, x, y, z, bot->GetOrientation(), delay, priority);
-            return true;
-        }
-    }
-    else if (exact_waypoint || disableMoveSplinePath || !generatePath)
+    if (exact_waypoint || disableMoveSplinePath || !generatePath)
     {
         float distance = bot->GetExactDist(x, y, z);
         if (distance > 0.01f)
@@ -916,15 +891,6 @@ bool MovementAction::ChaseTo(WorldObject* obj, float distance)
 
     if (obj)
         EmitDebugMove("ChaseTo", "chase", obj->GetPositionX(), obj->GetPositionY(), obj->GetPositionZ());
-
-    if (Vehicle* vehicle = bot->GetVehicle())
-    {
-        VehicleSeatEntry const* seat = vehicle->GetSeatForPassenger(bot);
-        if (!seat || !seat->CanControl())
-            return false;
-        vehicle->GetBase()->GetMotionMaster()->MoveChase((Unit*)obj, 30.0f);
-        return true;
-    }
 
     UpdateMovementState();
 
