@@ -96,6 +96,10 @@ protected:
     bool ReachCombatTo(Unit* target, float distance = 0.0f);
     float MoveDelay(float distance, bool backwards = false);
     void WaitForReach(float distance);
+    // PointsArray overload: sums segment distances and calls the float
+    // version. Matches the reference's WaitForReach(PointsArray) used at
+    // the end of DispatchMovement.
+    void WaitForReach(Movement::PointsArray const& path);
     void SetNextMovementDelay(float delayMillis);
     bool IsMovingAllowed(WorldObject* target);
     bool IsDuplicateMove(float x, float y, float z);

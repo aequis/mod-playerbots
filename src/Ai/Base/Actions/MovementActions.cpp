@@ -888,23 +888,50 @@ float MovementAction::MoveDelay(float distance, bool backwards)
     return delay;
 }
 
-// TODO should this be removed? (or modified to use "last movement" value?)
 void MovementAction::WaitForReach(float distance)
 {
-    float delay = 1000.0f * MoveDelay(distance);
+    // Reference formula: 1000 * MoveDelay(distance) + reactDelay. The
+    // reactDelay gives the bot a small slack at the end of a move so the
+    // next action sees the bot at rest rather than mid-spline.
+    float delay = 1000.0f * MoveDelay(distance) + sPlayerbotAIConfig.reactDelay;
 
     if (delay > sPlayerbotAIConfig.maxWaitForMove)
         delay = sPlayerbotAIConfig.maxWaitForMove;
 
+    // Combat clamp deliberately disabled (reference comments it out):
+    // clamping to globalCoolDown in combat caused bots to re-evaluate
+    // mid-pull and abandon a chase before reaching attack range. The
+    // commented block is preserved verbatim should we need to revisit.
+    /*
     Unit* target = *botAI->GetAiObjectContext()->GetValue<Unit*>("current target");
     Unit* player = *botAI->GetAiObjectContext()->GetValue<Unit*>("enemy player target");
     if ((player || target) && delay > sPlayerbotAIConfig.globalCoolDown)
         delay = sPlayerbotAIConfig.globalCoolDown;
+    */
 
     if (delay < 0)
         delay = 0;
 
+    // Reference uses SetDuration on the Action; AC's equivalent is
+    // SetNextCheckDelay on the AI loop. Same outcome: re-evaluation is
+    // postponed by `delay` ms.
     botAI->SetNextCheckDelay((uint32)delay);
+}
+
+void MovementAction::WaitForReach(Movement::PointsArray const& path)
+{
+    float distance = 0.0f;
+    if (!path.empty())
+    {
+        G3D::Vector3 const* previousPoint = &path[0];
+        for (auto it = path.begin() + 1; it != path.end(); ++it)
+        {
+            G3D::Vector3 const& pathPoint = (*it);
+            distance += (*previousPoint - pathPoint).length();
+            previousPoint = &pathPoint;
+        }
+    }
+    WaitForReach(distance);
 }
 
 // similiar to botAI->SetNextCheckDelay() but only stops movement
