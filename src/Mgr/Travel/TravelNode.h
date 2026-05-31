@@ -86,8 +86,6 @@
 //  (saveNodeStore) and by the debug dump command.
 //
 
-constexpr float MAX_PATHFINDING_DISTANCE = 296.0f;
-
 enum class TravelNodePathType : uint8
 {
     none = 0,
