@@ -274,6 +274,27 @@ bool WorldPosition::isUnderWater()
                     : false;
 };
 
+bool WorldPosition::setAtWaterSurface()
+{
+    if (!isInWater() && !isUnderWater())
+        return false;
+    Map* map = getMap();
+    if (!map)
+        return false;
+    // Returns the water level when liquid is present; falls back to
+    // ground level otherwise. Our isInWater/isUnderWater preconditions
+    // ensure liquid exists, so the +0.5y nudge lands the point on top
+    // of the surface (matches the reference's surface snap).
+    float const level = map->GetWaterOrGroundLevel(PHASEMASK_NORMAL,
+                                                   GetPositionX(),
+                                                   GetPositionY(),
+                                                   GetPositionZ());
+    if (level <= INVALID_HEIGHT)
+        return false;
+    setZ(level + 0.5f);
+    return true;
+}
+
 bool WorldPosition::IsValid()
 {
     return !(GetMapId() == MAPID_INVALID && GetPositionX() == 0 && GetPositionY() == 0 && GetPositionZ() == 0);

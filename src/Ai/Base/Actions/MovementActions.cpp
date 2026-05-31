@@ -31,7 +31,6 @@
 #include "Position.h"
 #include "PositionValue.h"
 #include "Random.h"
-#include "RandomPlayerbotMgr.h"
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 #include "SpellAuraEffects.h"
@@ -436,8 +435,11 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
     // Combat callers pass ignoreEnemyTargets=true so ClipPath doesn't
     // halt the chase at an intermediate hostile when funnelling through
     // MoveTo2 — the chase target itself is the enemy we want to reach.
-    bool moved = MoveTo(target->GetMapId(), endPos.x, endPos.y, endPos.z, false, false, false, false,
-                        MovementPriority::MOVEMENT_COMBAT, true, false, /*ignoreEnemyTargets*/true);
+    // react=true skips the end-of-dispatch WaitForReach so the bot keeps
+    // re-evaluating mid-chase instead of waiting for the spline to play
+    // out (which would suspend combat reactions for seconds at a time).
+    bool moved = MoveTo(target->GetMapId(), endPos.x, endPos.y, endPos.z, /*idle*/false, /*react*/true, false, false,
+                        MovementPriority::MOVEMENT_COMBAT, /*lessDelay*/true, false, /*ignoreEnemyTargets*/true);
     // Only emit on a successful new commit — combat ticks call this
     // many times per second and MoveTo internally suppresses while a
     // prior spline is still playing. Emitting before the suppression
@@ -2898,7 +2900,7 @@ bool MovementAction::BoardTransport(Transport* transport)
 }
 
 bool MovementAction::MoveTo2(WorldPosition endPos,
-                             bool idle, [[maybe_unused]] bool react,
+                             bool idle, bool react,
                              [[maybe_unused]] bool noPath,
                              bool ignoreEnemyTargets,
                              MovementPriority priority,
@@ -2917,6 +2919,25 @@ bool MovementAction::MoveTo2(WorldPosition endPos,
 
     WorldPosition botPos(bot);
     LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+
+    // Detailed-move throttle: if this bot is in low-activity mode
+    // (random/background) and a teleport cooldown is still in effect
+    // from a prior dispatch, postpone re-evaluation until the cooldown
+    // expires instead of re-resolving the path every tick.
+    bool const detailedMove = botAI->AllowActivity(DETAILED_MOVE_ACTIVITY, true);
+    if (!detailedMove && lastMove.nextTeleport)
+    {
+        time_t const now = time(nullptr);
+        if (lastMove.nextTeleport > now)
+        {
+            botAI->SetNextCheckDelay((uint32)((lastMove.nextTeleport - now) * 1000));
+            return true;
+        }
+    }
+    else
+    {
+        lastMove.nextTeleport = 0;
+    }
 
     // Short-stop: at destination — stop and clear the cached path.
     float const totalDistance = botPos.distance(endPos);
@@ -2976,6 +2997,10 @@ bool MovementAction::MoveTo2(WorldPosition endPos,
     if (path.empty())
         return false;
 
+    // If destination is on land, snap any underwater waypoints to the
+    // water surface so the bot swims along the top instead of diving.
+    path.surfaceSnapWaypoints(endPos);
+
     // Telemetry: show the path's actual tail coords vs bot + dest so we
     // can see whether the resolved path is heading toward the right place.
     if (botAI->HasStrategy("debug move", BOT_STATE_NON_COMBAT))
@@ -3001,7 +3026,7 @@ bool MovementAction::MoveTo2(WorldPosition endPos,
         botAI->DoSpecificAction("check mount state", Event(), true);
 
     bool const dispatched =
-        DispatchMovement(path, endPos, "walk", priority, lessDelay);
+        DispatchMovement(path, endPos, "walk", priority, lessDelay, react);
 
     if (dispatched && !idle)
         ClearIdleState();
@@ -3013,7 +3038,8 @@ bool MovementAction::DispatchMovement(TravelPath path,
                                       WorldPosition dest,
                                       char const* label,
                                       MovementPriority priority,
-                                      bool lessDelay)
+                                      bool lessDelay,
+                                      bool react)
 {
     // Build the PointsArray from the TravelPath. Done here (not at the
     // caller) so DispatchMovement can be invoked with a TravelPath
@@ -3033,11 +3059,11 @@ bool MovementAction::DispatchMovement(TravelPath path,
     for (size_t i = 1; i < points.size(); ++i)
         totalDist += (points[i] - points[i - 1]).length();
 
-    // Skip cosmetic walking for random bots with no nearby player —
-    // teleport to the path tail and schedule a cooldown instead.
-    // (Reference equivalent: long-distance teleport in MoveTo2 gated
-    // on !detailedMove && !HasPlayerNearby. Our gate is IsRandomBot.)
-    if (sRandomPlayerbotMgr.IsRandomBot(bot))
+    // Skip cosmetic walking for low-activity bots with no nearby
+    // player — teleport to the path tail and schedule a cooldown
+    // instead. Matches the reference's MoveTo2 gate
+    // (`!detailedMove && !HasPlayerNearby`).
+    if (!botAI->AllowActivity(DETAILED_MOVE_ACTIVITY, true))
     {
         WorldPosition tail(dest.GetMapId(), last.x, last.y, last.z);
         time_t now = time(nullptr);
@@ -3072,7 +3098,11 @@ bool MovementAction::DispatchMovement(TravelPath path,
         }
     }
 
-    bool const generatePath = !bot->IsFlying() && !bot->isSwimming();
+    // Reference: also gates on !IsInWater && !IsUnderWater so a bot
+    // wading through shallow water (no SWIMMING movement flag yet)
+    // doesn't trigger engine pathfinding mid-dispatch.
+    bool const generatePath = !bot->IsFlying() && !bot->isSwimming() &&
+                              !bot->IsInWater() && !bot->IsUnderWater();
 
     // Pre-dispatch normalization: clear looping emote, stand, interrupt
     // non-melee cast. Reference does this at MoveTo2 level before
@@ -3131,6 +3161,12 @@ bool MovementAction::DispatchMovement(TravelPath path,
 
     lastMove.Set(bot->GetMapId(), last.x, last.y, last.z,
                  bot->GetOrientation(), (uint32)duration, priority);
+
+    // Reference: DispatchMovement ends with WaitForReach(size) to block
+    // the AI loop while the spline plays. Combat callers (react=true)
+    // opt out so they can keep re-evaluating mid-chase.
+    if (!react)
+        WaitForReach(points);
 
     return true;
 }

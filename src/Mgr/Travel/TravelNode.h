@@ -486,6 +486,14 @@ public:
 
     bool makeShortCut(WorldPosition startPos, float maxDist, Unit* bot = nullptr);
 
+    // For each waypoint that's in/under water, snap its Z to the water
+    // surface. No-op when destination is itself underwater (caller wants
+    // the bot to dive) or path's front map differs from dest map.
+    // Mirrors the reference's underwater→surface snap so bots swim
+    // along the top of shallow water on land-bound paths instead of
+    // diving and air-walking the seafloor.
+    void surfaceSnapWaypoints(WorldPosition endPos);
+
     // Trim the path up to (and optionally including) the given point.
     // Returns true if the point was found. Used by upcoming special-
     // movement detection to advance the path past a portal/transport/

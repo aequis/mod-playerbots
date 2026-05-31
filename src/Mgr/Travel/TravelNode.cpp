@@ -908,6 +908,22 @@ void TravelPath::ClipPath(PlayerbotAI* ai, Unit* mover, bool ignoreEnemyTargets)
     fullPath.erase(std::next(endP), fullPath.end());
 }
 
+void TravelPath::surfaceSnapWaypoints(WorldPosition endPos)
+{
+    if (fullPath.empty())
+        return;
+    // Same map + dest is on land. If dest is itself underwater the bot
+    // wants to dive; leave waypoints alone.
+    if (fullPath.front().point.GetMapId() != endPos.GetMapId() ||
+        endPos.isUnderWater())
+        return;
+    for (auto& p : fullPath)
+    {
+        if (p.point.isUnderWater())
+            p.point.setAtWaterSurface();
+    }
+}
+
 bool TravelPath::makeShortCut(WorldPosition startPos, float maxDist, Unit* bot)
 {
     if (GetPath().empty())

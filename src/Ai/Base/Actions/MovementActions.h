@@ -69,6 +69,10 @@ protected:
     // MoveTo(mapId,...) delegates here unless an intentional bypass
     // (exact_waypoint / disableMoveSplinePath / flying / swimming /
     // backwards) routes the move straight to DoMovePoint.
+    // `react=true` opts the move out of the end-of-dispatch
+    // WaitForReach AI-loop block — combat callers should set this so the
+    // bot can keep re-evaluating mid-chase. Default false matches the
+    // reference's MoveTo2 default.
     bool MoveTo2(WorldPosition endPos,
                  bool idle = false, bool react = false,
                  bool noPath = false, bool ignoreEnemyTargets = false,
@@ -91,11 +95,15 @@ protected:
     // re-evaluation for the full move duration. Until combat dispatch is
     // restructured to bypass MoveTo2, the WaitForReach is deliberately
     // omitted.
+    // `react=true` skips the end-of-dispatch WaitForReach so the AI
+    // loop isn't blocked while the spline plays — combat callers use
+    // this to keep re-evaluating mid-chase.
     bool DispatchMovement(TravelPath path,
                           WorldPosition dest,
                           char const* label,
                           MovementPriority priority = MovementPriority::MOVEMENT_NORMAL,
-                          bool lessDelay = false);
+                          bool lessDelay = false,
+                          bool react = false);
     bool MoveTo(WorldObject* target, float distance = 0.0f,
                 MovementPriority priority = MovementPriority::MOVEMENT_NORMAL);
     bool MoveNear(WorldObject* target, float distance = sPlayerbotAIConfig.contactDistance,
