@@ -3342,46 +3342,6 @@ bool MovementAction::HandleSpecialMovement(TravelPath& path)
             return bot->ActivateTaxiPathTo(route, flightMaster, 0);
         }
 
-        case PathNodeType::NODE_TELEPORT:
-        {
-            if (!next.entry)
-                return false;
-
-            // Can't cast while flying — let the bot land first.
-            bool const canCastNow = !bot->IsFlying();
-
-            if (next.entry == 8690)  // Hearthstone
-            {
-                if (canCastNow)
-                {
-                    bool const ok = botAI->DoSpecificAction("hearthstone",
-                                                            Event("move action"), true);
-                    if (ok)
-                        return true;
-                }
-            }
-            else if (canCastNow)
-            {
-                // Mage city portal / similar spell — dismount, drop
-                // shapeshift, queue cast. We don't gate on reagents (no
-                // "has reagents for" value on AC); the server-side cast
-                // attempt will fail cleanly if reagents are missing.
-                if (bot->IsMounted())
-                    bot->Dismount();
-                botAI->RemoveShapeshift();
-                if (botAI->DoSpecificAction(
-                        "cast",
-                        Event("rpg action", std::to_string(next.entry)), true))
-                    return true;
-            }
-
-            // Cast didn't happen or failed — clear the cached path so
-            // the next tick re-resolves cleanly instead of retrying the
-            // same teleport edge that just failed.
-            AI_VALUE(LastMovement&, "last movement").setPath(TravelPath());
-            return false;
-        }
-
         default:
             return false;
     }

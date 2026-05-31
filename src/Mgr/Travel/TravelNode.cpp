@@ -912,13 +912,6 @@ bool TravelPath::UpcommingSpecialMovement(WorldPosition startPos,
         return true;
     }
 
-    // Teleport spell (hearthstone et al.): fire on the next-step marker.
-    if (nextP->type == PathNodeType::NODE_TELEPORT)
-    {
-        cutTo(*nextP, false);
-        return true;
-    }
-
     // Flight path: interact with flight master when in range.
     if (startP->type == PathNodeType::NODE_FLIGHTPATH &&
         startPos.distance(startP->point) < INTERACTION_DISTANCE)
@@ -1239,14 +1232,6 @@ TravelPath TravelNodeRoute::BuildPath(std::vector<WorldPosition> pathToStart, st
                 // Full taxi waypoint route; same reasoning as transport.
                 travelPath.addPath(nodePath->GetPath(), PathNodeType::NODE_FLIGHTPATH, nodePath->getPathObject());
             }
-            else if (nodePath->getPathType() == TravelNodePathType::teleportSpell)
-            {
-                // Hearthstone or spell-cast teleport edge: emit a paired
-                // NODE_TELEPORT (entry = exit) so HandleSpecialMovement can
-                // dispatch the cast when the head reaches the entry point.
-                travelPath.addPoint(*prevNode->getPosition(), PathNodeType::NODE_TELEPORT, nodePath->getPathObject());
-                travelPath.addPoint(*node->getPosition(), PathNodeType::NODE_TELEPORT, nodePath->getPathObject());
-            }
             else
             {
                 std::vector<WorldPosition> path = nodePath->GetPath();
@@ -1435,8 +1420,6 @@ TravelNodeRoute TravelNodeMap::GetNodeRoute(TravelNode* start, TravelNode* goal,
 
     std::vector<TravelNodeStub*> open, closed;
 
-    std::vector<TravelNode*> portNodes;  // synthetic teleport/portal edges
-
     if (bot)
     {
         PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
@@ -1473,97 +1456,20 @@ TravelNodeRoute TravelNodeMap::GetNodeRoute(TravelNode* start, TravelNode* goal,
                         PAI_VALUE2(uint32, "free money for", (uint32)NeedMoneyFor::travel));
                 }
             }
-
-            // Hearthstone (item 6948 / spell 8690): inject a synthetic
-            // teleport edge from start to the node nearest the bot's
-            // home bind, so A* can pick hearthing over walking.
-            if (bot->IsAlive() && bot->HasItemCount(6948, 1))
-            {
-                WorldPosition homePos = AI_VALUE(WorldPosition, "home bind");
-                std::vector<WorldPosition> dummy;
-                TravelNode* homeNode = sTravelNodeMap.getNode(homePos, dummy, nullptr, 50.0f);
-                if (homeNode && homeNode != start)
-                {
-                    PortalNode* portNode = new PortalNode(start);
-                    portNode->SetPortal(start, homeNode, 8690);
-
-                    TravelNodeStub* hsStub = &m_stubs.insert(std::make_pair(
-                        static_cast<TravelNode*>(portNode), TravelNodeStub(portNode))).first->second;
-
-                    // Cost: max(2, (10 - deathCount) * MINUTE) — matches
-                    // reference exactly, including the uint32 underflow at
-                    // deathCount > 10 (which makes hearthstone prohibitive
-                    // for very-dead bots — apparently intentional).
-                    hsStub->costFromStart = std::max<uint32>(2,
-                        (10 - AI_VALUE(uint32, "death count")) * MINUTE);
-                    hsStub->heuristic = hsStub->dataNode->fDist(goal) / botSpeed;
-                    hsStub->totalCost = hsStub->costFromStart + hsStub->heuristic;
-
-                    open.push_back(hsStub);
-                    hsStub->open = true;
-                    portNodes.push_back(portNode);
-                }
-            }
-
-            // Mage teleport spells: 3561 Stormwind, 3562 Ironforge, 3563 Undercity,
-            // 3565 Darnassus, 3566 Thunder Bluff, 3567 Orgrimmar, 18960 Moonglade.
-            // Inject one synthetic teleport edge per known + ready spell.
-            static const uint32 teleSpells[] = {3561, 3562, 3563, 3565, 3566, 3567, 18960};
-            for (uint32 spellId : teleSpells)
-            {
-                if (!bot->IsAlive() || bot->IsInCombat())
-                    break;
-                if (!bot->HasSpell(spellId))
-                    continue;
-                if (bot->HasSpellCooldown(spellId))
-                    continue;
-
-                SpellTargetPosition const* stp =
-                    sSpellMgr->GetSpellTargetPosition(spellId, EFFECT_0);
-                if (!stp)
-                    continue;
-
-                WorldPosition telePos(stp->target_mapId, stp->target_X,
-                                      stp->target_Y, stp->target_Z, 0.0f);
-                std::vector<WorldPosition> dummy;
-                TravelNode* destNode = sTravelNodeMap.getNode(telePos, dummy, nullptr, 10.0f);
-                if (!destNode || destNode == start)
-                    continue;
-
-                PortalNode* portNode = new PortalNode(start);
-                portNode->SetPortal(start, destNode, spellId);
-
-                TravelNodeStub* tsStub = &m_stubs.insert(std::make_pair(
-                    static_cast<TravelNode*>(portNode), TravelNodeStub(portNode))).first->second;
-
-                tsStub->costFromStart = MINUTE;  // cheaper than ~1-min walk
-                tsStub->heuristic = tsStub->dataNode->fDist(goal) / botSpeed;
-                tsStub->totalCost = tsStub->costFromStart + tsStub->heuristic;
-
-                open.push_back(tsStub);
-                tsStub->open = true;
-                portNodes.push_back(portNode);
-            }
         }
         else
             startStub->currentGold = bot->GetMoney();
     }
 
-    if (open.empty() && !start->hasRouteTo(goal))
-    {
-        for (auto* p : portNodes)
-            delete p;
+    if (!start->hasRouteTo(goal))
         return TravelNodeRoute();
-    }
 
     // Min-heap: smallest f at front
     auto heapComp = [](TravelNodeStub* i, TravelNodeStub* j) { return i->totalCost > j->totalCost; };
 
     open.push_back(startStub);
     startStub->open = true;
-    // Heapify all of open in one pass — covers both startStub and any
-    // PortalNode stubs injected above.
-    std::make_heap(open.begin(), open.end(), heapComp);
+    std::push_heap(open.begin(), open.end(), heapComp);
 
     while (!open.empty())
     {
@@ -1589,12 +1495,7 @@ TravelNodeRoute TravelNodeMap::GetNodeRoute(TravelNode* start, TravelNode* goal,
             }
 
             reverse(path.begin(), path.end());
-
-            // Successful route: hand off ownership of any synthetic
-            // PortalNodes injected at the head. Caller (GetFullPath)
-            // is expected to call cleanTempNodes() when done with the
-            // route — see the call site for the lifecycle.
-            return TravelNodeRoute(path, portNodes);
+            return TravelNodeRoute(path);
         }
 
         for (auto const& link : *currentNode->dataNode->getLinks())  // for each successor n' of n
@@ -1633,9 +1534,6 @@ TravelNodeRoute TravelNodeMap::GetNodeRoute(TravelNode* start, TravelNode* goal,
         }
     }
 
-    // A* exhausted open without reaching goal. Clean up synthetic nodes.
-    for (auto* p : portNodes)
-        delete p;
     return TravelNodeRoute();
 }
 
@@ -1828,7 +1726,6 @@ TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos, [[maybe_unused]] uin
             if (transportEntry)
             {
                 path = route.BuildPath({botPos}, endProbe, bot);
-                route.cleanTempNodes();
                 return path;
             }
 
@@ -1852,7 +1749,6 @@ TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos, [[maybe_unused]] uin
             if (!startPathOk)
             {
                 badStartNodes.push_back(s);
-                route.cleanTempNodes();
                 continue;
             }
 
@@ -1861,47 +1757,7 @@ TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos, [[maybe_unused]] uin
             // ResolveMovePath cycles can reuse it.
             beginPath = pathToStart;
             path = route.BuildPath(pathToStart, endProbe, bot);
-            route.cleanTempNodes();
             return path;
-        }
-    }
-
-    // No graph route found. Last-resort hearthstone fallback (reference
-    // also does this): if bot has hearthstone item and is alive, treat
-    // the bot's current position as a one-off node and try routing from
-    // it to each endCandidate via the hearthstone PortalNode edge.
-    if (Player* player = dynamic_cast<Player*>(bot))
-    {
-        if (player->IsAlive() && player->HasItemCount(6948, 1))
-        {
-            TravelNode* botNode = new TravelNode(botPos, "Bot Pos", false);
-            botNode->setPoint(botPos);
-
-            for (TravelNode* e : endCandidates)
-            {
-                if (!e || std::find(badEndNodes.begin(), badEndNodes.end(), e) != badEndNodes.end())
-                    continue;
-                TravelNodeRoute route = GetNodeRoute(botNode, e, player);
-                if (route.isEmpty())
-                    continue;
-
-                // Build the end-side path again for this candidate.
-                WorldPosition endNodePos = *e->getPosition();
-                std::vector<WorldPosition> endProbe;
-                if (endNodePos.GetMapId() == destination.GetMapId())
-                {
-                    Unit* pathBot = (bot && bot->GetMapId() == destination.GetMapId()) ? bot : nullptr;
-                    endProbe = endNodePos.getPathTo(destination, pathBot);
-                }
-                else
-                    endProbe = {endNodePos, destination};
-
-                route.addTempNodes({botNode});  // transfer ownership of botNode
-                path = route.BuildPath({botPos}, endProbe, bot);
-                route.cleanTempNodes();
-                return path;
-            }
-            delete botNode;
         }
     }
 

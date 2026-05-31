@@ -95,10 +95,7 @@ enum class TravelNodePathType : uint8
     areaTrigger = 2,
     transport = 3,
     flightPath = 4,
-    // Teleport-spell edges (hearthstone, mage portals). Generated at A*
-    // search start via PortalNode injection; consumed by
-    // HandleSpecialMovement's NODE_TELEPORT case.
-    teleportSpell = 5,
+    // value 5 reserved (was teleportSpell — removed)
     staticPortal = 6
 };
 
@@ -410,26 +407,6 @@ protected:
     // uint32 transportId = 0;
 };
 
-// Synthetic A* node injected at search start to represent a teleport-spell
-// (hearthstone, mage portal, etc.) as an alternative travel edge. Owned
-// by GetNodeRoute caller; deleted after the route is built.
-class PortalNode : public TravelNode
-{
-public:
-    PortalNode(TravelNode* baseNode) : TravelNode(baseNode) {}
-
-    void SetPortal(TravelNode* baseNode, TravelNode* endNode, uint32 portalSpell)
-    {
-        nodeName = baseNode->getName();
-        point = *baseNode->getPosition();
-        paths.clear();
-        links.clear();
-        TravelNodePath path(0.1f, 0.1f, (uint8)TravelNodePathType::teleportSpell,
-                            portalSpell, true);
-        setPathTo(endNode, path);
-    }
-};
-
 // Route step type
 enum class PathNodeType : uint8
 {
@@ -439,10 +416,7 @@ enum class PathNodeType : uint8
     NODE_AREA_TRIGGER = 3,
     NODE_TRANSPORT = 4,
     NODE_FLIGHTPATH = 5,
-    // Teleport-spell endpoint (hearthstone, mage portal). Emitted by
-    // TravelNodeRoute::BuildPath when traversing a teleportSpell-type
-    // edge; consumed by HandleSpecialMovement.
-    NODE_TELEPORT = 6,
+    // value 6 reserved (was NODE_TELEPORT — removed with teleportSpell)
     NODE_STATIC_PORTAL = 7
 };
 
@@ -575,14 +549,6 @@ public:
     {
         nodes = nodes1;
     }
-    TravelNodeRoute(std::vector<TravelNode*> nodes1,
-                    std::vector<TravelNode*> const& tempNodes_)
-    {
-        nodes = nodes1;
-        if (!tempNodes_.empty())
-            addTempNodes(tempNodes_);
-    }
-
     bool isEmpty() { return nodes.empty(); }
 
     bool hasNode(TravelNode* node)
@@ -592,19 +558,6 @@ public:
     float getTotalDistance();
 
     std::vector<TravelNode*> getNodes() { return nodes; }
-
-    // Take ownership of synthetic A* nodes (PortalNode etc.). Must call
-    // cleanTempNodes() to delete them when the route is no longer needed.
-    void addTempNodes(std::vector<TravelNode*> const& tempNodes_)
-    {
-        tempNodes.insert(tempNodes.end(), tempNodes_.begin(), tempNodes_.end());
-    }
-    void cleanTempNodes()
-    {
-        for (auto* n : tempNodes)
-            delete n;
-        tempNodes.clear();
-    }
 
     TravelPath BuildPath(
         std::vector<WorldPosition> pathToStart = {},
@@ -619,7 +572,6 @@ private:
         return std::find(nodes.begin(), nodes.end(), node);
     }
     std::vector<TravelNode*> nodes;
-    std::vector<TravelNode*> tempNodes;  // owned synthetic nodes (PortalNode etc.)
 };
 
 // A node container to aid A* calculations with nodes.
