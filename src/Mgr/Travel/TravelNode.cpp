@@ -1472,13 +1472,12 @@ TravelNodeRoute TravelNodeMap::GetNodeRoute(TravelNode* start, TravelNode* goal,
                     TravelNodeStub* hsStub = &m_stubs.insert(std::make_pair(
                         static_cast<TravelNode*>(portNode), TravelNodeStub(portNode))).first->second;
 
-                    // Cost: max(2 seconds, (10 - deathCount) * MINUTE).
-                    // Fresh bot → 10 minutes (walks if anything's closer);
-                    // recently-died bot → drops toward 2 seconds (hearth wins).
-                    // Clamp deathCount to 10 to avoid uint32 underflow that
-                    // the reference implementation has at deathCount > 10.
-                    uint32 const dc = std::min<uint32>(10, AI_VALUE(uint32, "death count"));
-                    hsStub->costFromStart = std::max<uint32>(2, (10 - dc) * MINUTE);
+                    // Cost: max(2, (10 - deathCount) * MINUTE) — matches
+                    // reference exactly, including the uint32 underflow at
+                    // deathCount > 10 (which makes hearthstone prohibitive
+                    // for very-dead bots — apparently intentional).
+                    hsStub->costFromStart = std::max<uint32>(2,
+                        (10 - AI_VALUE(uint32, "death count")) * MINUTE);
                     hsStub->heuristic = hsStub->dataNode->fDist(goal) / botSpeed;
                     hsStub->totalCost = hsStub->costFromStart + hsStub->heuristic;
 
@@ -1548,18 +1547,8 @@ TravelNodeRoute TravelNodeMap::GetNodeRoute(TravelNode* start, TravelNode* goal,
     // PortalNode stubs injected above.
     std::make_heap(open.begin(), open.end(), heapComp);
 
-    constexpr uint32 MAX_A_STAR_EXPLORED = 500;
-    uint32 nodesExplored = 0;
-
     while (!open.empty())
     {
-        if (++nodesExplored > MAX_A_STAR_EXPLORED)
-        {
-            for (auto* p : portNodes)
-                delete p;
-            return TravelNodeRoute();
-        }
-
         std::pop_heap(open.begin(), open.end(), heapComp);
         currentNode = open.back();
         open.pop_back();
@@ -1776,19 +1765,17 @@ TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos, [[maybe_unused]] uin
             continue;
         WorldPosition endNodePos = *e->getPosition();
 
-        // Validate endNode -> destination is pathable. Reference uses 1y
-        // strict tolerance, but that rejects valid cave-interior nodes
-        // when the destination (quest GO, mob, item) is slightly off the
-        // navmesh (small shelf, alcove). Use INTERACTION_DISTANCE so any
-        // endNode whose mmap can reach close enough for the bot to
-        // interact with the destination is accepted.
+        // Validate endNode -> destination is pathable within 1y (matches
+        // reference exactly). Off-mesh destinations that fail this check
+        // need a fix at the data layer (node placement, quest dest coords),
+        // not a loosened threshold here.
         std::vector<WorldPosition> endProbe;
         bool endPathOk = false;
         if (endNodePos.GetMapId() == destination.GetMapId())
         {
             Unit* pathBot = (bot && bot->GetMapId() == destination.GetMapId()) ? bot : nullptr;
             endProbe = endNodePos.getPathTo(destination, pathBot);
-            endPathOk = destination.isPathTo(endProbe, INTERACTION_DISTANCE);
+            endPathOk = destination.isPathTo(endProbe, 1.0f);
         }
         else
         {
