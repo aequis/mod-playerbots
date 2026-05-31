@@ -93,6 +93,11 @@ public:
     bool randomBotGuildNearby, randomBotInvitePlayer, inviteChat;
     uint32 globalCoolDown, reactDelay, maxWaitForMove, disableMoveSplinePath, expireActionTime,
         dispelAuraDuration, passiveDelay, repeatDelay, errorDelay, rpgDelay, sitDelay, returnDelay, lootDelay;
+    // Transport handling mode (matches reference `transportTeleportType`):
+    //   0 = walk on board, walk off (default, fully physical)
+    //   1 = walk on board, but UseTransport teleports on/off if walk fails
+    //   2 = skip the ride entirely — teleport directly across the route
+    uint32 transportTeleportType;
     bool dynamicReactDelay;
     float sightDistance, spellDistance, reactDistance, grindDistance, lootDistance, shootDistance, fleeDistance,
         tooCloseDistance, meleeDistance, followDistance, whisperDistance, contactDistance, aoeRadius, rpgDistance,

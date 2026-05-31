@@ -1038,6 +1038,15 @@ AiPlayerbot.EnableNewRpgStrategy = 1
 # Default: 0 (disabled)
 AiPlayerbot.EnableTravelNodes = 0
 
+# Transport handling mode (travel node graph only):
+#   0 = bot walks to dock, boards transport, rides, walks off (fully physical)
+#   1 = same as 0, but if walk-on/off fails the boarding teleports the bot
+#   2 = bot teleports across the route, skipping the ride entirely
+# Reference default is 0; raise only if invisible/random-bot mass travel
+# performance becomes an issue.
+# Default: 0
+AiPlayerbot.TransportTeleportType = 0
+
 # Control probability weights for RPG status of bots. Takes effect only when the status meets its premise.​
 # Sum of weights need not be 100. Set to 0 to disable the status.
 #
