@@ -338,7 +338,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
 
     // Path-aware funnel: ResolveMovePath → makeShortCut →
     // UpcommingSpecialMovement/HandleSpecialMovement → ClipPath →
-    // DispatchPathPoints. Matches the reference's MoveTo2 flow.
+    // DispatchMovement. Matches the reference's MoveTo2 flow.
     return MoveTo2(WorldPosition(mapId, x, y, z),
                    idle, react, false, ignoreEnemyTargets, priority, lessDelay);
 }
@@ -2993,12 +2993,7 @@ bool MovementAction::MoveTo2(WorldPosition endPos,
         botAI->TellMasterNoFacing(tlog);
     }
 
-    std::vector<WorldPosition> const& pts = path.getPointPath();
-    Movement::PointsArray points;
-    points.reserve(pts.size());
-    for (auto const& wp : pts)
-        points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
-    if (points.empty())
+    if (path.empty())
         return false;
 
     if (!bot->IsMounted() && !bot->IsInCombat() &&
@@ -3006,7 +3001,7 @@ bool MovementAction::MoveTo2(WorldPosition endPos,
         botAI->DoSpecificAction("check mount state", Event(), true);
 
     bool const dispatched =
-        DispatchPathPoints(endPos, points, "walk", priority, lessDelay);
+        DispatchMovement(path, endPos, "walk", priority, lessDelay);
 
     if (dispatched && !idle)
         ClearIdleState();
@@ -3014,12 +3009,20 @@ bool MovementAction::MoveTo2(WorldPosition endPos,
     return dispatched;
 }
 
-bool MovementAction::DispatchPathPoints(WorldPosition const& dest,
-                                        Movement::PointsArray& points,
-                                        char const* label,
-                                        MovementPriority priority,
-                                        bool lessDelay)
+bool MovementAction::DispatchMovement(TravelPath const& path,
+                                      WorldPosition const& dest,
+                                      char const* label,
+                                      MovementPriority priority,
+                                      bool lessDelay)
 {
+    // Build the PointsArray from the TravelPath. Done here (not at the
+    // caller) so DispatchMovement can be invoked with a TravelPath
+    // directly, matching the reference's signature.
+    std::vector<WorldPosition> const& pts = path.getPointPath();
+    Movement::PointsArray points;
+    points.reserve(pts.size());
+    for (auto const& wp : pts)
+        points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
     if (points.empty())
         return false;
 
@@ -3080,11 +3083,22 @@ bool MovementAction::DispatchPathPoints(WorldPosition const& dest,
     if (bot->IsNonMeleeSpellCast(true))
         bot->InterruptNonMeleeSpells(true);
 
-    // Per-point terrain clamp.
+    // Per-point terrain clamp with transport-passenger conversion
+    // sandwich: when on a transport, path coords are in transport-local
+    // space; UpdateAllowedPositionZ samples world terrain, so we convert
+    // local→world, snap, world→local. Without the sandwich, snapping a
+    // transport-relative point against world terrain produces garbage.
+    Transport* transport = bot->GetTransport();
     for (auto& pt : points)
+    {
+        if (transport)
+            transport->CalculatePassengerPosition(pt.x, pt.y, pt.z);
         bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
+        if (transport)
+            transport->CalculatePassengerOffset(pt.x, pt.y, pt.z);
+    }
 
-    // mm.Clear → MovePoint(last) → MoveSplinePath → WaitForReach.
+    // mm.Clear → MovePoint(last) → MoveSplinePath.
     MotionMaster* mm = bot->GetMotionMaster();
     mm->Clear();
 
@@ -3102,7 +3116,8 @@ bool MovementAction::DispatchPathPoints(WorldPosition const& dest,
 
     // WaitForReach equivalent: cache the dispatched target + duration on
     // lastMove. Leave ~10y headroom on long paths so we re-evaluate
-    // before arrival.
+    // before arrival. (Reference also calls WaitForReach here, which
+    // blocks the AI loop; we omit that — see header comment.)
     float waitDist = totalDist > sPlayerbotAIConfig.reactDistance
                          ? std::max(totalDist - 10.0f, 0.0f) : totalDist;
     UnitMoveType const speedType = (moveMode == FORCED_MOVEMENT_WALK) ? MOVE_WALK : MOVE_RUN;
