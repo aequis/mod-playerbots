@@ -927,9 +927,9 @@ bool TravelPath::UpcommingSpecialMovement(WorldPosition startPos,
         return true;
     }
 
-    // Walk-on / teleport-to-transport boarding mode (modes 0 and 1).
-    // Cut to dock if off-transport, traverse to disembark if on-transport.
-    if (sPlayerbotAIConfig.transportTeleportType < 2 &&
+    // Board-and-ride mode (transportSkipRide == false). Cut to dock if
+    // off-transport, traverse to disembark if on-transport.
+    if (!sPlayerbotAIConfig.transportSkipRide &&
         startP->type == PathNodeType::NODE_TRANSPORT)
     {
         uint32 const entry = nextP->entry;
@@ -954,11 +954,11 @@ bool TravelPath::UpcommingSpecialMovement(WorldPosition startPos,
         }
     }
 
-    // Teleport-across mode (mode 2): bot is approaching a transport
-    // node — walk forward to find the first non-transport node (the
-    // disembark side), cut to prevP (last transport node) so
+    // Skip-ride mode (transportSkipRide == true): bot is approaching a
+    // transport node — walk forward to find the first non-transport node
+    // (the disembark side), cut to prevP (last transport node) so
     // HandleSpecialMovement teleports the bot across directly.
-    if (sPlayerbotAIConfig.transportTeleportType == 2 &&
+    if (sPlayerbotAIConfig.transportSkipRide &&
         nextP->type == PathNodeType::NODE_TRANSPORT)
     {
         for (auto p = std::next(startP); p != fullPath.end(); ++p)

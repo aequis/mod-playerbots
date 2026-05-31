@@ -3145,47 +3145,20 @@ bool MovementAction::WaitForTransport()
         return false;
 
     // Disembark: head is the transport node where we should get off,
-    // next is the world-position dock to land at. Reference UseTransport
-    // with doTeleport=(transportTeleportType > 0) routes to either
-    // MoveOffTransport-teleport (mode 1+) or MoveOffTransport-walk (mode 0).
-    PathNodePoint const& dock = path[0];
+    // next is the world-position dock to land at.
     if (path.size() < 2)
         return true;  // no telePoint to land at; keep waiting
     PathNodePoint const& tele = path[1];
-    (void)dock;  // kept for reference parity (UseTransport signature)
 
     transport->RemovePassenger(bot);
-
-    if (sPlayerbotAIConfig.transportTeleportType > 0)
-    {
-        // Mode 1+: teleport directly to exit.
-        bot->StopMovingOnCurrentPos();
-        bool const teleported = bot->TeleportTo(tele.point.GetMapId(),
-                                                tele.point.GetPositionX(),
-                                                tele.point.GetPositionY(),
-                                                tele.point.GetPositionZ(),
-                                                bot->GetOrientation());
-        if (!teleported)
-            return true;  // try again next tick
-        lastMove.lastTransportEntry = 0;
-        return false;
-    }
-
-    // Mode 0: NearTeleportTo current world position (drops bot off
-    // transport plane to world coords without unloading client), then
-    // walk to the exit position. Matches reference MoveOffTransport
-    // with doTeleport=false.
-    bot->NearTeleportTo(bot->GetPositionX(), bot->GetPositionY(),
-                        bot->GetPositionZ(), bot->GetOrientation());
-
-    if (MotionMaster* mm = bot->GetMotionMaster())
-    {
-        mm->Clear();
-        mm->MovePoint(0, tele.point.GetPositionX(),
-                         tele.point.GetPositionY(),
-                         tele.point.GetPositionZ(),
-                         FORCED_MOVEMENT_RUN, 0.0f, 0.0f, true, false);
-    }
+    bot->StopMovingOnCurrentPos();
+    bool const teleported = bot->TeleportTo(tele.point.GetMapId(),
+                                            tele.point.GetPositionX(),
+                                            tele.point.GetPositionY(),
+                                            tele.point.GetPositionZ(),
+                                            bot->GetOrientation());
+    if (!teleported)
+        return true;  // try again next tick
 
     lastMove.lastTransportEntry = 0;
     return false;
@@ -3274,10 +3247,7 @@ bool MovementAction::HandleSpecialMovement(TravelPath& path)
         case PathNodeType::NODE_TRANSPORT:
         {
             // Disembark: head is a transport node and bot is on one.
-            // Reference dispatch: MoveOffTransport(exit, doTeleport) where
-            // doTeleport = (transportTeleportType > 0). Mode 1+ teleports
-            // straight to exit; mode 0 NearTeleports off transport plane
-            // then walks to exit.
+            // RemovePassenger + TeleportTo the next-step world position.
             if (!hasNext)
                 return false;
 
@@ -3287,35 +3257,14 @@ bool MovementAction::HandleSpecialMovement(TravelPath& path)
 
             PathNodePoint const& dst = path[1];
             transport->RemovePassenger(bot);
-
-            if (sPlayerbotAIConfig.transportTeleportType > 0)
-            {
-                bot->StopMovingOnCurrentPos();
-                bool const teleported = bot->TeleportTo(dst.point.GetMapId(),
-                                                        dst.point.GetPositionX(),
-                                                        dst.point.GetPositionY(),
-                                                        dst.point.GetPositionZ(),
-                                                        bot->GetOrientation());
-                AI_VALUE(LastMovement&, "last movement").lastTransportEntry = 0;
-                return teleported;
-            }
-
-            // Mode 0: NearTeleportTo current world pos (drops bot off
-            // transport plane without unloading the client), then walk
-            // to the exit.
-            bot->NearTeleportTo(bot->GetPositionX(), bot->GetPositionY(),
-                                bot->GetPositionZ(), bot->GetOrientation());
-
-            if (MotionMaster* mm = bot->GetMotionMaster())
-            {
-                mm->Clear();
-                mm->MovePoint(0, dst.point.GetPositionX(),
-                                 dst.point.GetPositionY(),
-                                 dst.point.GetPositionZ(),
-                                 FORCED_MOVEMENT_RUN, 0.0f, 0.0f, true, false);
-            }
+            bot->StopMovingOnCurrentPos();
+            bool const teleported = bot->TeleportTo(dst.point.GetMapId(),
+                                                    dst.point.GetPositionX(),
+                                                    dst.point.GetPositionY(),
+                                                    dst.point.GetPositionZ(),
+                                                    bot->GetOrientation());
             AI_VALUE(LastMovement&, "last movement").lastTransportEntry = 0;
-            return true;
+            return teleported;
         }
 
         default:
@@ -3527,87 +3476,29 @@ bool MovementAction::BoardTransport(Transport* transport)
         return true;
     }
 
-    // Teleport-onto mode (transportTeleportType >= 1): skip the walk-toward
-    // phase and jump directly to a boarding edge. Matches reference's
-    // MoveOnTransport(doTeleport=true) — PlayerRelocation + AddPassenger.
-    if (sPlayerbotAIConfig.transportTeleportType >= 1)
-    {
-        float edgeX, edgeY, edgeZ;
-        if (FindBoardingPointOnTransport(map, transport, transport,
-                transport->GetPositionX(), transport->GetPositionY(),
-                transport->GetPositionZ(),
-                bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-                edgeX, edgeY, edgeZ))
-        {
-            if (bot->TeleportTo(map->GetId(), edgeX, edgeY, edgeZ, bot->GetOrientation()))
-            {
-                transport->AddPassenger(bot, true);
-                bot->StopMovingOnCurrentPos();
-                EmitDebugMove("Transport:board", "teleport-skip-walk",
-                              edgeX, edgeY, edgeZ);
-                return true;
-            }
-        }
-        // Fall through to mode-0 if no boarding point — better than refusing.
-    }
-
-    // Mode 0: reference MoveOnTransport(doTeleport=false) — AddPassenger
-    // FIRST (snaps bot onto transport plane), then walk a path on deck.
-    // We don't have RandomPointOnTrans / transport-surface mmap, so when
-    // the bot is within INTERACTION_DISTANCE of the transport's boarding
-    // edge we approximate: AddPassenger + MovePoint toward the transport
-    // center as a "deck destination." Bot motion is then transport-
-    // relative because of the AddPassenger.
-    float boardX = transport->GetPositionX();
-    float boardY = transport->GetPositionY();
-    float boardZ = transport->GetPositionZ();
-
+    // Bot off transport: find a boarding edge and teleport-snap directly
+    // onto it, then AddPassenger. We can't walk on the deck (no transport-
+    // surface mmap), so the snap-board is the only universal approach.
     float edgeX, edgeY, edgeZ;
-    bool haveEdge = FindBoardingPointOnTransport(map, transport, transport,
-        transport->GetPositionX(), transport->GetPositionY(),
-        transport->GetPositionZ(), bot->GetPositionX(), bot->GetPositionY(),
-        bot->GetPositionZ(), edgeX, edgeY, edgeZ);
-    if (haveEdge)
+    if (!FindBoardingPointOnTransport(map, transport, transport,
+            transport->GetPositionX(), transport->GetPositionY(),
+            transport->GetPositionZ(),
+            bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            edgeX, edgeY, edgeZ))
     {
-        boardX = edgeX;
-        boardY = edgeY;
-        boardZ = edgeZ;
+        // No boarding edge found — wait a tick. Caller's WaitForReach
+        // upstream throttles the retry.
+        EmitDebugMove("Transport:board", "no-edge",
+                      transport->GetPositionX(), transport->GetPositionY(),
+                      transport->GetPositionZ());
+        return false;
     }
 
-    float const dxBoard = bot->GetPositionX() - boardX;
-    float const dyBoard = bot->GetPositionY() - boardY;
-    bool const nearBoardingPoint =
-        (dxBoard * dxBoard + dyBoard * dyBoard) <
-        INTERACTION_DISTANCE * INTERACTION_DISTANCE;
+    if (!bot->TeleportTo(map->GetId(), edgeX, edgeY, edgeZ, bot->GetOrientation()))
+        return false;
 
-    if (nearBoardingPoint)
-    {
-        // Snap onto transport plane, then walk a short deck path so the
-        // bot is visibly on the boat (mirrors reference mode-0 deck walk).
-        transport->AddPassenger(bot, true);
-        if (MotionMaster* mm = bot->GetMotionMaster())
-        {
-            if (!bot->IsStandState())
-                bot->SetStandState(UNIT_STAND_STATE_STAND);
-            mm->Clear();
-            mm->MovePoint(0, transport->GetPositionX(), transport->GetPositionY(),
-                          transport->GetPositionZ(),
-                          FORCED_MOVEMENT_RUN, 0.0f, 0.0f, false, false);
-        }
-        EmitDebugMove("Transport:board", "snap-and-deck-walk",
-                      boardX, boardY, boardZ);
-        return true;
-    }
-
-    // Too far to snap — walk toward boarding edge.
-    if (MotionMaster* mm = bot->GetMotionMaster())
-    {
-        if (!bot->IsStandState())
-            bot->SetStandState(UNIT_STAND_STATE_STAND);
-        mm->MovePoint(0, boardX, boardY, boardZ,
-                      FORCED_MOVEMENT_NONE, 0.0f, 0.0f, false, false);
-        EmitDebugMove("Transport:walk", "approach-boarding", boardX, boardY, boardZ);
-    }
-
-    return false;
+    transport->AddPassenger(bot, true);
+    bot->StopMovingOnCurrentPos();
+    EmitDebugMove("Transport:board", "snap", edgeX, edgeY, edgeZ);
+    return true;
 }
