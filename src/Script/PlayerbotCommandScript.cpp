@@ -16,6 +16,7 @@
 #include "BattleGroundTactics.h"
 #include "Chat.h"
 #include "GuildTaskMgr.h"
+#include "MapMgr.h"
 #include "PerfMonitor.h"
 #include "PlayerbotMgr.h"
 #include "RandomPlayerbotMgr.h"
@@ -186,7 +187,24 @@ public:
         }
 
         uint32 zoneId = player->GetZoneId();
-        std::vector<TravelNode*> const& nodes = sTravelNodeMap.GetNodesInZone(zoneId);
+        uint32 const phaseMask = player->GetPhaseMask();
+        uint32 const mapId = player->GetMapId();
+        std::vector<TravelNode*> nodes;
+        for (TravelNode* n : sTravelNodeMap.getNodes())
+        {
+            if (!n)
+                continue;
+            WorldPosition* pos = n->getPosition();
+            if (!pos || pos->GetMapId() != mapId)
+                continue;
+            uint32 const nodeZone = sMapMgr->GetZoneId(phaseMask, mapId,
+                                                       pos->GetPositionX(),
+                                                       pos->GetPositionY(),
+                                                       pos->GetPositionZ());
+            if (nodeZone != zoneId)
+                continue;
+            nodes.push_back(n);
+        }
         if (nodes.empty())
         {
             handler->PSendSysMessage("No travel nodes registered in zone {} (is the travel node system loaded?)", zoneId);
