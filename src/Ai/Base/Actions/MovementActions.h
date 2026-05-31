@@ -91,8 +91,8 @@ protected:
     // re-evaluation for the full move duration. Until combat dispatch is
     // restructured to bypass MoveTo2, the WaitForReach is deliberately
     // omitted.
-    bool DispatchMovement(TravelPath const& path,
-                          WorldPosition const& dest,
+    bool DispatchMovement(TravelPath path,
+                          WorldPosition dest,
                           char const* label,
                           MovementPriority priority = MovementPriority::MOVEMENT_NORMAL,
                           bool lessDelay = false);

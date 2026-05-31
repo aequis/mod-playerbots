@@ -3009,8 +3009,8 @@ bool MovementAction::MoveTo2(WorldPosition endPos,
     return dispatched;
 }
 
-bool MovementAction::DispatchMovement(TravelPath const& path,
-                                      WorldPosition const& dest,
+bool MovementAction::DispatchMovement(TravelPath path,
+                                      WorldPosition dest,
                                       char const* label,
                                       MovementPriority priority,
                                       bool lessDelay)
