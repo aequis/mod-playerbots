@@ -1713,36 +1713,17 @@ TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos, [[maybe_unused]] uin
 {
     TravelPath path;
 
-    // AC-side workaround that reference doesn't have: if a 40-step mmap
-    // probe from bot to destination either reaches close to dest OR
-    // makes any meaningful forward progress (>30y absolute), prefer
-    // that direct path over the graph. The graph's K=5 endNode pick +
-    // strict 1y endPath validation rejects destinations that are
-    // slightly off-mesh (cave shelves, alcoves), so without this the
-    // bot falls to a single-point MoveTo fallback and wiggles in place.
-    // Loosened from "50% AND >30y" to just ">30y" so a partial probe
-    // toward the cave entrance gets accepted; the next tick's
-    // re-resolve from the new bot position can extend further.
+    // Probe-first short-circuit (matches reference exactly): if a 40-step
+    // mmap probe from bot to destination reaches within spellDistance of
+    // dest, use the probe directly and skip graph routing. Otherwise
+    // fall through to the graph A* below — the failed probe waypoints
+    // would ideally feed into getRoute as startPath (reference does
+    // this; we don't yet — TODO).
     if (botPos.GetMapId() == destination.GetMapId())
     {
         std::vector<WorldPosition> probe = destination.getPathFromPath({botPos}, bot, 40);
-        if (probe.size() >= 2)
-        {
-            float const totalDist = botPos.distance(destination);
-            float const probeEndToDest = destination.distance(probe.back());
-            float const probeProgress = totalDist - probeEndToDest;
-
-            bool const closeEnough = probeEndToDest < 30.0f;
-            bool const meaningfulProgress = probeProgress > 30.0f;
-
-            if (closeEnough || meaningfulProgress)
-            {
-                path.addPoint(botPos, PathNodeType::NODE_PREPATH);
-                for (size_t i = 1; i < probe.size(); ++i)
-                    path.addPoint(probe[i], PathNodeType::NODE_PATH);
-                return path;
-            }
-        }
+        if (destination.isPathTo(probe, sPlayerbotAIConfig.spellDistance))
+            return TravelPath(probe);
     }
 
     std::shared_lock<std::shared_timed_mutex> guard(m_nMapMtx);
