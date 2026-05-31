@@ -3470,7 +3470,7 @@ bool MovementAction::BoardTransport(Transport* transport)
     if (bot->GetTransport() == transport)
         return true;
 
-    // Check if bot is on the transport surface
+    // Check if bot is already on the transport surface (walked into range).
     float probeZ = std::max(bot->GetPositionZ(), transport->GetPositionZ());
     Transport* surface = GetTransportForPosTolerant(map, bot, bot->GetPhaseMask(), bot->GetPositionX(),
         bot->GetPositionY(), probeZ);
@@ -3483,7 +3483,34 @@ bool MovementAction::BoardTransport(Transport* transport)
                       transport->GetPositionY(), transport->GetPositionZ());
         return true;
     }
-    // Not on surface — move toward the transport
+
+    // Teleport-onto mode (transportTeleportType >= 1): skip the walk-toward
+    // phase and jump directly to a boarding edge. Matches reference's
+    // `UseTransport(...telep=true)` shortcut for invisible / random bots
+    // and any caller that doesn't want the visible boarding sequence.
+    if (sPlayerbotAIConfig.transportTeleportType >= 1)
+    {
+        float edgeX, edgeY, edgeZ;
+        if (FindBoardingPointOnTransport(map, transport, transport,
+                transport->GetPositionX(), transport->GetPositionY(),
+                transport->GetPositionZ(),
+                bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+                edgeX, edgeY, edgeZ))
+        {
+            if (bot->TeleportTo(map->GetId(), edgeX, edgeY, edgeZ, bot->GetOrientation()))
+            {
+                transport->AddPassenger(bot, true);
+                bot->StopMovingOnCurrentPos();
+                EmitDebugMove("Transport:board", "teleport-skip-walk",
+                              edgeX, edgeY, edgeZ);
+                return true;
+            }
+        }
+        // Fall through to walk-toward if no boarding point or teleport
+        // failed — better than refusing the board outright.
+    }
+
+    // Walk-toward mode (transportTeleportType == 0, or mode>=1 fallback).
     float destX = transport->GetPositionX();
     float destY = transport->GetPositionY();
     float destZ = transport->GetPositionZ();
