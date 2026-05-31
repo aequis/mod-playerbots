@@ -1705,14 +1705,14 @@ TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos, [[maybe_unused]] uin
     // Probe-first short-circuit (matches reference exactly): if a 40-step
     // mmap probe from bot to destination reaches within spellDistance of
     // dest, use the probe directly and skip graph routing. Otherwise
-    // fall through to the graph A* below — the failed probe waypoints
-    // would ideally feed into getRoute as startPath (reference does
-    // this; we don't yet — TODO).
+    // the probe waypoints are kept as `beginPath` and fed into per-
+    // candidate startPath cropping below.
+    std::vector<WorldPosition> beginPath;
     if (botPos.GetMapId() == destination.GetMapId())
     {
-        std::vector<WorldPosition> probe = destination.getPathFromPath({botPos}, bot, 40);
-        if (destination.isPathTo(probe, sPlayerbotAIConfig.spellDistance))
-            return TravelPath(probe);
+        beginPath = destination.getPathFromPath({botPos}, bot, 40);
+        if (destination.isPathTo(beginPath, sPlayerbotAIConfig.spellDistance))
+            return TravelPath(beginPath);
     }
 
     std::shared_lock<std::shared_timed_mutex> guard(m_nMapMtx);
@@ -1815,10 +1815,17 @@ TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos, [[maybe_unused]] uin
             }
 
             // Validate bot -> startNode is pathable within maxStartDistance.
+            // Reference reuses the (failed) probe waypoints first via
+            // cropPathTo, falling back to a fresh getPathTo only if the
+            // probe can't be cropped to reach startNode. This saves
+            // re-running mmap when the probe already covers part of
+            // the journey to startNode.
             float const maxStartDistance = s->isTransport() ? 20.0f : 1.0f;
-            std::vector<WorldPosition> pathToStart;
-            bool startPathOk = false;
-            if (bot && botPos.GetMapId() == startNodePos.GetMapId())
+            std::vector<WorldPosition> pathToStart = beginPath;
+            bool startPathOk = !pathToStart.empty() &&
+                startNodePos.cropPathTo(pathToStart, maxStartDistance);
+
+            if (!startPathOk && bot && botPos.GetMapId() == startNodePos.GetMapId())
             {
                 pathToStart = botPos.getPathTo(startNodePos, bot);
                 startPathOk = startNodePos.isPathTo(pathToStart, maxStartDistance);
@@ -1831,7 +1838,10 @@ TravelPath TravelNodeMap::GetFullPath(WorldPosition botPos, [[maybe_unused]] uin
                 continue;
             }
 
-            // Both ends validated — build and return.
+            // Both ends validated — build and return. Save the
+            // successful pathToStart back as beginPath so subsequent
+            // ResolveMovePath cycles can reuse it.
+            beginPath = pathToStart;
             path = route.BuildPath(pathToStart, endProbe, bot);
             route.cleanTempNodes();
             return path;
