@@ -69,7 +69,7 @@ protected:
     // MoveTo(mapId,...) delegates here unless an intentional bypass
     // (exact_waypoint / disableMoveSplinePath / flying / swimming /
     // backwards) routes the move straight to DoMovePoint.
-    bool MoveTo2(WorldPosition const& endPos,
+    bool MoveTo2(WorldPosition endPos,
                  bool idle = false, bool react = false,
                  bool noPath = false, bool ignoreEnemyTargets = false,
                  MovementPriority priority = MovementPriority::MOVEMENT_NORMAL,

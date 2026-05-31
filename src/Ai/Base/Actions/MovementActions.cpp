@@ -2870,7 +2870,7 @@ bool MovementAction::BoardTransport(Transport* transport)
     return true;
 }
 
-bool MovementAction::MoveTo2(WorldPosition const& endPos,
+bool MovementAction::MoveTo2(WorldPosition endPos,
                              bool idle, [[maybe_unused]] bool react,
                              [[maybe_unused]] bool noPath,
                              bool ignoreEnemyTargets,
