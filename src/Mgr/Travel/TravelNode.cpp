@@ -12,6 +12,7 @@
 #include <unordered_set>
 
 #include "BudgetValues.h"
+#include "DBCStores.h"
 #include "MapMgr.h"
 #include "PathGenerator.h"
 #include "Playerbots.h"
@@ -757,6 +758,14 @@ bool TravelPath::UpcommingSpecialMovement(WorldPosition startPos,
     {
         if (startP->entry)
         {
+            // Reference also verifies the DBC AreaTriggerEntry record
+            // exists (cmangos sAreaTriggerStore.LookupEntry). AC's
+            // sAreaTriggerStore is the same DBC store. Skip the trigger
+            // node if the DBC record is missing — likely a stale entry
+            // in the baked dataset.
+            if (!sAreaTriggerStore.LookupEntry(startP->entry))
+                return false;
+
             AreaTrigger const* at = sObjectMgr->GetAreaTrigger(startP->entry);
             if (!at)
                 return false;
@@ -876,7 +885,13 @@ void TravelPath::ClipPath(PlayerbotAI* ai, Unit* mover, bool ignoreEnemyTargets)
             float const range = cre->GetAttackDistance(mover);
             if (WorldPosition(unit).sqDistance(p->point) > range * range)
                 continue;
-            if (!unit->IsHostileTo(mover) || !unit->IsWithinLOSInMap(mover))
+            // Reference uses CanAttackOnSight (faction + sanctuary +
+            // feign + phased + passive flags). AC equivalent is
+            // CanCreatureAttack with skipDistCheck=true (range already
+            // confirmed above). IsHostileTo alone over-clipped at
+            // neutral mobs that wouldn't actually aggro.
+            if (!cre->CanCreatureAttack(mover, true) ||
+                !unit->IsWithinLOSInMap(mover))
                 continue;
 
             endP = p;

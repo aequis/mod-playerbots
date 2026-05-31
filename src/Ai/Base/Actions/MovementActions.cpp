@@ -2625,17 +2625,43 @@ bool MovementAction::HandleSpecialMovement(TravelPath& path)
 
             uint32 const spellId = goInfo->spellcaster.spellId;
             SpellInfo const* spellInfo = SpellMgr::instance()->GetSpellInfo(spellId);
-            if (!spellInfo || !spellInfo->HasEffect(SPELL_EFFECT_TELEPORT_UNITS))
+            if (!spellInfo)
                 return false;
 
-            // Mounted handling: refuse the interact while flying high
-            // (the dismount would drop the bot). Otherwise dismount.
+            // EffectTriggerSpell indirection: some portal GOs cast a
+            // spell that triggers ANOTHER spell which is the actual
+            // teleport. Follow the chain once before the TELEPORT_UNITS
+            // check, matching reference behaviour.
+            if (spellInfo->Effects[0].TriggerSpell)
+            {
+                if (SpellInfo const* triggered =
+                        sSpellMgr->GetSpellInfo(spellInfo->Effects[0].TriggerSpell))
+                    spellInfo = triggered;
+            }
+
+            if (!spellInfo->HasEffect(SPELL_EFFECT_TELEPORT_UNITS))
+                return false;
+
+            // Mounted handling: dismount if not flying, or if flying low
+            // enough that the drop is safe (reference threshold: 10y
+            // above ground). Refuse the interact otherwise.
             if (bot->IsMounted())
             {
                 if (bot->IsFlying())
-                    return false;
+                {
+                    float const groundZ = bot->GetMap()->GetHeight(
+                        bot->GetPhaseMask(),
+                        bot->GetPositionX(),
+                        bot->GetPositionY(),
+                        bot->GetPositionZ());
+                    if (bot->GetPositionZ() - groundZ > 10.0f)
+                        return false;
+                }
                 bot->Dismount();
             }
+            // AC-side defensive addition (no reference parallel): some
+            // shapeshift forms block GO interact. Harmless when not in
+            // form.
             botAI->RemoveShapeshift();
 
             GuidVector nearGOs = AI_VALUE(GuidVector, "nearest game objects");
@@ -2644,7 +2670,11 @@ bool MovementAction::HandleSpecialMovement(TravelPath& path)
                 GameObject* go = botAI->GetGameObject(guid);
                 if (!go || go->GetEntry() != cur.entry)
                     continue;
-                if (!bot->GetGameObjectIfCanInteractWith(guid, GAMEOBJECT_TYPE_SPELLCASTER))
+                // MAX_GAMEOBJECT_TYPE accepts any type — reference uses
+                // this rather than restricting to SPELLCASTER, so GOOBER
+                // portals (which we accept at the goInfo->type check
+                // above) aren't filtered out here.
+                if (!bot->GetGameObjectIfCanInteractWith(guid, MAX_GAMEOBJECT_TYPE))
                     continue;
 
                 WorldPacket packet(CMSG_GAMEOBJ_USE);
@@ -2700,6 +2730,10 @@ bool MovementAction::HandleSpecialMovement(TravelPath& path)
                                                     dst.point.GetPositionZ(),
                                                     bot->GetOrientation());
             AI_VALUE(LastMovement&, "last movement").lastTransportEntry = 0;
+            // Throttle re-evaluation after disembark — reference adds a
+            // 1s WaitForReach here to prevent rapid re-tries while the
+            // post-teleport state settles.
+            WaitForReach(1000.0f);
             return teleported;
         }
 
