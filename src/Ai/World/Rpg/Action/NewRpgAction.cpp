@@ -164,7 +164,12 @@ bool NewRpgGoGrindAction::Execute(Event /*event*/)
         // transitioning out of the stuck state instead of nudging in
         // place. Idle lets the status picker rotate to a new state.
         if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
+        {
+            EmitDebugMove("MoveFar", "give-up",
+                          data->pos.GetPositionX(), data->pos.GetPositionY(), data->pos.GetPositionZ(),
+                          "idle");
             botAI->rpgInfo.ChangeToIdle();
+        }
         return true;  // consume tick, no nudge
     }
 
@@ -184,7 +189,12 @@ bool NewRpgGoCampAction::Execute(Event /*event*/)
             return true;
         }
         if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
+        {
+            EmitDebugMove("MoveFar", "give-up",
+                          data->pos.GetPositionX(), data->pos.GetPositionY(), data->pos.GetPositionZ(),
+                          "idle");
             botAI->rpgInfo.ChangeToIdle();
+        }
         return true;
     }
 
@@ -250,6 +260,9 @@ bool NewRpgWanderNpcAction::Execute(Event /*event*/)
         // one. No nudge — stand still until retry.
         if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
         {
+            EmitDebugMove("MoveFar", "give-up",
+                          bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+                          "drop-npc");
             data.npcOrGo = ObjectGuid();
             data.lastReach = 0;
             botAI->rpgInfo.moveRetryCount = 0;
@@ -386,6 +399,12 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
         // catches it next tick.
         if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
         {
+            std::ostringstream nx;
+            nx << "next-spawn(" << (data.currentSpawnIdx + 1) << "/"
+               << data.candidateSpawns.size() << ")";
+            EmitDebugMove("MoveFar", "give-up",
+                          target.GetPositionX(), target.GetPositionY(), target.GetPositionZ(),
+                          nx.str().c_str());
             ++data.currentSpawnIdx;
             data.lastReachPOI = 0;
             botAI->rpgInfo.moveRetryCount = 0;
@@ -514,7 +533,12 @@ bool NewRpgDoQuestAction::DoCompletedQuest(NewRpgInfo::DoQuest& data)
         // if turn-in POI is unreachable repeatedly so the bot doesn't
         // sit on a broken handler.
         if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
+        {
+            EmitDebugMove("MoveFar", "give-up",
+                          data.pos.GetPositionX(), data.pos.GetPositionY(), data.pos.GetPositionZ(),
+                          "idle(turn-in)");
             botAI->rpgInfo.ChangeToIdle();
+        }
         return true;
     }
 

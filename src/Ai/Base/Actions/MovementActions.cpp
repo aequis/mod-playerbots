@@ -62,7 +62,9 @@ void MovementAction::EmitDebugMove(char const* method, char const* generator, fl
 
     NewRpgInfo& info = botAI->rpgInfo;
     NewRpgStatus status = info.GetStatus();
+    bool const inCombat = botAI->GetState() == BOT_STATE_COMBAT;
     char const* statusName =
+        inCombat ? "combat" :
         status == RPG_IDLE ? "idle" :
         status == RPG_GO_GRIND ? "go-grind" :
         status == RPG_GO_CAMP ? "go-camp" :
@@ -73,14 +75,22 @@ void MovementAction::EmitDebugMove(char const* method, char const* generator, fl
         status == RPG_TRAVEL_FLIGHT ? "travel-flight" :
         status == RPG_OUTDOOR_PVP ? "outdoor-pvp" : "?";
 
-    // Resolve a human-readable target name from the RPG context. When
-    // we can name the target (quest objective, wander NPC, flight
-    // master, travel-node hop, etc.), it replaces the loc=(x,y,z)
-    // field — names are far more useful than coordinates. When no
-    // target can be named (combat moves, follow, flee, ad-hoc), we
-    // fall through to loc=(x,y,z).
+    // Resolve a human-readable target name. In combat, the bot is
+    // actively engaging an enemy that is unrelated to the RPG state's
+    // target — show that enemy instead of the now-stale RPG goal.
+    // Out of combat, fall back to the RPG context: quest objective,
+    // wander NPC, flight master, etc. Names are far more useful than
+    // coordinates; loc=(x,y,z) only when nothing nameable applies.
     std::string targetName;
-    switch (status)
+    if (inCombat)
+    {
+        Unit* current = *botAI->GetAiObjectContext()->GetValue<Unit*>("current target");
+        Unit* enemyPlayer = *botAI->GetAiObjectContext()->GetValue<Unit*>("enemy player target");
+        Unit* enemy = current ? current : enemyPlayer;
+        if (enemy)
+            targetName = std::string("vs:") + enemy->GetName();
+    }
+    else switch (status)
     {
         case RPG_DO_QUEST:
             if (auto* data = std::get_if<NewRpgInfo::DoQuest>(&info.data))
@@ -164,6 +174,11 @@ void MovementAction::EmitDebugMove(char const* method, char const* generator, fl
         << " | " << statusName
         << " | " << std::fixed << std::setprecision(2) << dis << " yard"
         << " | " << (targetName.empty() ? "-" : targetName.c_str());
+    // Surface the RPG MoveFarTo retry counter so when bots get stuck
+    // it's obvious from the whisper alone (retry=N/MAX) — and the
+    // "give-up" event emitters below show retry=MAX/MAX explicitly.
+    if (info.moveRetryCount > 0)
+        out << " | retry=" << uint32(info.moveRetryCount) << "/" << uint32(NewRpgInfo::MAX_MOVE_RETRIES);
     if (extra && *extra)
         out << " | " << extra;
     botAI->TellMasterNoFacing(out);
