@@ -425,11 +425,6 @@ bool TravelNode::isUselessLink(TravelNode* farNode)
     return false;
 }
 
-void TravelNode::cropUselessLink(TravelNode* farNode)
-{
-    if (isUselessLink(farNode))
-        removeLinkTo(farNode);
-}
 
 bool TravelNode::cropUselessLinks()
 {
@@ -477,28 +472,6 @@ bool TravelNode::cropUselessLinks()
 
 }
 
-bool TravelNode::isEqual(TravelNode* compareNode)
-{
-    if (!hasLinkTo(compareNode))
-        return false;
-
-    if (!compareNode->hasLinkTo(this))
-        return false;
-
-    for (auto& node : TravelNodeMap::instance().getNodes())
-    {
-        if (node == this || node == compareNode)
-            continue;
-
-        if (node->hasLinkTo(this) != node->hasLinkTo(compareNode))
-            return false;
-
-        if (hasLinkTo(node) != compareNode->hasLinkTo(node))
-            return false;
-    }
-
-    return true;
-}
 
 void TravelNode::print([[maybe_unused]] bool printFailed)
 {
@@ -2120,7 +2093,6 @@ void TravelNodeMap::generateAll()
     hasToSave = true;
     saveNodeStore();
 
-    BuildZoneIndex();
     PrecomputeReachability();
 }
 
@@ -2145,7 +2117,6 @@ void TravelNodeMap::Init()
         saveNodeStore();
     }
 
-    BuildZoneIndex();
     PrecomputeReachability();
 }
 
@@ -2745,85 +2716,6 @@ std::vector<uint32> TravelNodeMap::BuildPath(uint32 fromNode, uint32 toNode,
     return path;
 }
 
-void TravelNodeMap::BuildZoneIndex()
-{
-    m_zoneIndex.clear();
-    m_mapIndex.clear();
-
-    for (auto* node : nodes)
-    {
-        if (!node)
-            continue;
-
-        WorldPosition* pos = node->getPosition();
-        uint32 mapId = pos->GetMapId();
-
-        m_mapIndex[mapId].push_back(node);
-
-        uint32 zoneId = sMapMgr->GetZoneId(PHASEMASK_NORMAL, *pos);
-        if (zoneId)
-            m_zoneIndex[zoneId].push_back(node);
-    }
-}
-
-TravelNode* TravelNodeMap::GetNearestNodeInZone(WorldPosition pos, uint32 zoneId)
-{
-    auto it = m_zoneIndex.find(zoneId);
-    if (it == m_zoneIndex.end() || it->second.empty())
-        return GetNearestNodeOnMap(pos);  // Fallback to map-wide
-
-    TravelNode* bestNode = nullptr;
-    float bestDist = FLT_MAX;
-
-    for (auto* node : it->second)
-    {
-        if (!node || node->GetMapId() != pos.GetMapId())
-            continue;
-        float dist = node->fDist(pos);
-        if (dist < bestDist)
-        {
-            bestDist = dist;
-            bestNode = node;
-        }
-    }
-
-    if (!bestNode)
-        return GetNearestNodeOnMap(pos);
-
-    return bestNode;
-}
-
-std::vector<TravelNode*> const& TravelNodeMap::GetNodesInZone(uint32 zoneId) const
-{
-    static std::vector<TravelNode*> const empty;
-    auto it = m_zoneIndex.find(zoneId);
-    if (it == m_zoneIndex.end())
-        return empty;
-    return it->second;
-}
-
-TravelNode* TravelNodeMap::GetNearestNodeOnMap(WorldPosition pos)
-{
-    auto it = m_mapIndex.find(pos.GetMapId());
-    if (it == m_mapIndex.end() || it->second.empty())
-        return nullptr;
-
-    TravelNode* bestNode = nullptr;
-    float bestDist = FLT_MAX;
-
-    for (auto* node : it->second)
-    {
-        if (!node)
-            continue;
-        float d = node->fDist(pos);
-        if (d < bestDist)
-        {
-            bestDist = d;
-            bestNode = node;
-        }
-    }
-
-    return bestNode;
 }
 
 void TravelNodeMap::PrecomputeReachability()

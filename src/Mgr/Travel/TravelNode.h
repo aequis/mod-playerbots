@@ -93,7 +93,7 @@ enum class TravelNodePathType : uint8
     areaTrigger = 2,
     transport = 3,
     flightPath = 4,
-    // value 5 reserved (was teleportSpell — removed)
+    // teleportSpell = 5 // maybe someday
     staticPortal = 6
 };
 
@@ -353,11 +353,8 @@ public:
     }
     void removeLinkTo(TravelNode* node, bool removePaths = false);
 
-    bool isEqual(TravelNode* compareNode);
-
     // Removes links to other nodes that can also be reached by passing another node.
     bool isUselessLink(TravelNode* farNode);
-    void cropUselessLink(TravelNode* farNode);
     bool cropUselessLinks();
 
     // Returns all nodes that can be reached from this node.
@@ -704,15 +701,7 @@ public:
     void InitTaxiGraph();
     std::vector<uint32> FindTaxiPath(uint32 fromNode, uint32 toNode);
 
-    void BuildZoneIndex();
     void PrecomputeReachability();
-
-    TravelNode* GetNearestNodeInZone(WorldPosition pos, uint32 zoneId);
-    TravelNode* GetNearestNodeOnMap(WorldPosition pos);
-
-    // All nodes registered to a zone (post-BuildZoneIndex). Returns an
-    // empty static vector for unknown zones.
-    std::vector<TravelNode*> const& GetNodesInZone(uint32 zoneId) const;
 
     // Resolve a full TravelPath from botPos to destination. Returns an
     // empty TravelPath if no graph route + mmap stitch is reachable;
@@ -753,9 +742,6 @@ private:
         m_taxiPathCache;
 
     std::vector<TravelNode*> nodes;
-
-    std::unordered_map<uint32, std::vector<TravelNode*>> m_zoneIndex;
-    std::unordered_map<uint32, std::vector<TravelNode*>> m_mapIndex;
 
     std::vector<std::pair<uint32, WorldPosition>> mapOffsets;
 
