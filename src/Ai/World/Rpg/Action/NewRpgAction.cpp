@@ -287,14 +287,23 @@ bool NewRpgDoQuestAction::Execute(Event /*event*/)
 
 bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
 {
-    uint32 questId = data.questId;
-    if (data.pos != WorldPosition())
+    uint32 const questId = data.questId;
+
+    // === Spawn-index pipeline ===
+    // Reference (cmangos) per-spawn pattern: walk to specific known
+    // spawns of the current objective one by one, advance through the
+    // candidate list on per-spawn timeout, refresh the list when the
+    // objective makes progress (so the list reflects what's still
+    // needed). No POI cluster roam, no random nudging.
+
+    // 1. Detect objective completion. If the current objective is done,
+    //    drop the cached spawn list so we re-fetch for the next
+    //    incomplete objective on this tick.
+    if (!data.candidateSpawns.empty())
     {
-        /// @TODO: extract to a new function
-        int32 currentObjective = data.objectiveIdx;
-        // check if the objective has completed
+        int32 const currentObjective = data.objectiveIdx;
         Quest const* quest = sObjectMgr->GetQuestTemplate(questId);
-        const QuestStatusData& q_status = bot->getQuestStatusMap().at(questId);
+        QuestStatusData const& q_status = bot->getQuestStatusMap().at(questId);
         bool completed = true;
         if (currentObjective < QUEST_OBJECTIVES_COUNT)
         {
@@ -307,96 +316,103 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
                 quest->RequiredItemCount[currentObjective - QUEST_OBJECTIVES_COUNT])
                 completed = false;
         }
-        // the current objective is completed, clear and find a new objective later
         if (completed)
         {
+            data.candidateSpawns.clear();
+            data.currentSpawnIdx = 0;
             data.lastReachPOI = 0;
-            data.pos = WorldPosition();
             data.objectiveIdx = 0;
             data.pursuedLootGO.Clear();
             data.pursuedUseGO.Clear();
             data.pursuedUseTarget.Clear();
         }
     }
-    if (data.pos == WorldPosition())
+
+    // 2. Fetch spawn candidates if we don't have any. Abandon the
+    //    quest if no spawns are indexed on the bot's current map (the
+    //    quest is for another zone or our index is missing them).
+    if (data.candidateSpawns.empty())
     {
-        std::vector<POIInfo> poiInfo;
-        if (!GetQuestPOIPosAndObjectiveIdx(questId, poiInfo))
+        std::vector<WorldPosition> spawns;
+        int32 objectiveIdx = 0;
+        if (!FetchQuestSpawnsForObjective(questId, spawns, objectiveIdx))
         {
-            // can't find a poi pos to go, stop doing quest for now
+            botAI->lowPriorityQuest.insert(questId);
+            botAI->rpgStatistic.questAbandoned++;
+            LOG_DEBUG("playerbots", "[New RPG] {} abandoned quest {} — no spawns indexed",
+                      bot->GetName(), questId);
             botAI->rpgInfo.ChangeToIdle();
             return true;
         }
-        uint32 rndIdx = urand(0, poiInfo.size() - 1);
-        G3D::Vector2 nearestPoi = poiInfo[rndIdx].pos;
-        int32 objectiveIdx = poiInfo[rndIdx].objectiveIdx;
-
-        float dx = nearestPoi.x, dy = nearestPoi.y;
-
-        // z = MAX_HEIGHT as we do not know accurate z
-        float dz = std::max(bot->GetMap()->GetHeight(dx, dy, MAX_HEIGHT), bot->GetMap()->GetWaterLevel(dx, dy));
-
-        // double check for GetQuestPOIPosAndObjectiveIdx
-        if (dz == INVALID_HEIGHT || dz == VMAP_INVALID_HEIGHT_VALUE)
-            return false;
-
-        WorldPosition pos(bot->GetMapId(), dx, dy, dz);
+        data.candidateSpawns = std::move(spawns);
+        data.currentSpawnIdx = 0;
         data.lastReachPOI = 0;
-        data.pos = pos;
         data.objectiveIdx = objectiveIdx;
         data.pursuedLootGO.Clear();
         data.pursuedUseGO.Clear();
         data.pursuedUseTarget.Clear();
     }
 
-    if (bot->GetDistance(data.pos) > 10.0f && !data.lastReachPOI)
+    // 3. If we've exhausted the candidate list, abandon (the spawn
+    //    list was sorted by distance and we tried each).
+    if (data.currentSpawnIdx >= data.candidateSpawns.size())
     {
-        // Yield to attack-anything ONLY if a mob needed by this exact
-        // quest+objective is right next to us. The broad variant (any
-        // quest in the log) yielded for every nearby mob and derailed
-        // turn-ins / cross-zone travel through other quests' clusters.
+        botAI->lowPriorityQuest.insert(questId);
+        botAI->rpgStatistic.questAbandoned++;
+        LOG_DEBUG("playerbots", "[New RPG] {} abandoned quest {} — exhausted all {} candidate spawns",
+                  bot->GetName(), questId, static_cast<uint32>(data.candidateSpawns.size()));
+        botAI->rpgInfo.ChangeToIdle();
+        return true;
+    }
+
+    WorldPosition const& target = data.candidateSpawns[data.currentSpawnIdx];
+
+    // 4. Walk to the current target spawn. Yield to attack-anything
+    //    only if a quest mob for this specific objective is adjacent
+    //    (so we don't walk past the target we just spawned next to).
+    if (bot->GetDistance(target) > 10.0f && !data.lastReachPOI)
+    {
         if (HasNearbyQuestMobForObjective(15.0f, data.questId, data.objectiveIdx))
             return false;
 
-        // Note: previously yielded ~10%/tick when any hostile was
-        // within 25y. That overrode the do-quest multiplier in
-        // practice (combined with bots getting aggroed on the way,
-        // which ALSO bypasses the multiplier via combat engine) and
-        // bots ended up grinding their way to POIs instead of
-        // travelling. Quest-mob exception above is kept so we don't
-        // walk past a quest target while gathering. Anything else
-        // hostile is the multiplier's job to throttle — and bots
-        // that DO get aggroed switch to combat engine where the
-        // class strategy handles it.
-
-        if (MoveFarTo(data.pos))
+        if (MoveFarTo(target))
         {
             botAI->rpgInfo.moveRetryCount = 0;
             return true;
         }
-        // Retry counter (reference pattern): on N consecutive
-        // failures, drop this objective and go idle so the picker can
-        // try another quest / state.
+        // Retry counter: on N consecutive MoveFarTo failures, advance
+        // to the next candidate spawn rather than sit on an unreachable
+        // one. If that exhausts the list the abandon branch above
+        // catches it next tick.
         if (++botAI->rpgInfo.moveRetryCount >= NewRpgInfo::MAX_MOVE_RETRIES)
-            botAI->rpgInfo.ChangeToIdle();
+        {
+            ++data.currentSpawnIdx;
+            data.lastReachPOI = 0;
+            botAI->rpgInfo.moveRetryCount = 0;
+        }
         return true;
     }
-    // Now we are near the quest objective
-    // kill mobs and looting quest should be done automatically by grind strategy
 
+    // 5. At the spawn. Stamp arrival on first reach so the per-spawn
+    //    timeout below has a baseline.
     if (!data.lastReachPOI)
     {
         data.lastReachPOI = getMSTime();
         return true;
     }
-    // stayed at this POI for more than 5 minutes
-    if (GetMSTimeDiffToNow(data.lastReachPOI) >= poiStayTime)
+
+    // 6. Per-spawn timeout. The reference's TravelTarget expires after
+    //    a configurable window; we use 30s — long enough to finish a
+    //    melee pull, short enough to advance off an empty/dead spawn.
+    //    On any progression since the list was fetched, refresh so we
+    //    re-sort by distance and pick the next nearest live spawn.
+    constexpr uint32 perSpawnTimeoutMs = 30 * 1000;
+    if (GetMSTimeDiffToNow(data.lastReachPOI) >= perSpawnTimeoutMs)
     {
         bool hasProgression = false;
-        int32 currentObjective = data.objectiveIdx;
-        // check if the objective has progression
+        int32 const currentObjective = data.objectiveIdx;
         Quest const* quest = sObjectMgr->GetQuestTemplate(questId);
-        const QuestStatusData& q_status = bot->getQuestStatusMap().at(questId);
+        QuestStatusData const& q_status = bot->getQuestStatusMap().at(questId);
         if (currentObjective < QUEST_OBJECTIVES_COUNT)
         {
             if (q_status.CreatureOrGOCount[currentObjective] != 0 && quest->RequiredNpcOrGoCount[currentObjective])
@@ -408,28 +424,27 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
                 quest->RequiredItemCount[currentObjective - QUEST_OBJECTIVES_COUNT])
                 hasProgression = true;
         }
-        if (!hasProgression)
+        if (hasProgression)
         {
-            // we has reach the poi for more than 5 mins but no progession
-            // may not be able to complete this quest, marked as abandoned
-            /// @TODO: It may be better to make lowPriorityQuest a global set shared by all bots (or saved in db)
-            botAI->lowPriorityQuest.insert(questId);
-            botAI->rpgStatistic.questAbandoned++;
-            LOG_DEBUG("playerbots", "[New RPG] {} marked as abandoned quest {}", bot->GetName(), questId);
-            botAI->rpgInfo.ChangeToIdle();
+            // Refresh: re-fetch candidates so the list reflects what's
+            // still needed and is sorted from the bot's new position.
+            data.candidateSpawns.clear();
+            data.currentSpawnIdx = 0;
+            data.lastReachPOI = 0;
             return true;
         }
-        // clear and select another poi later
+        // No progression at this spawn — advance to the next candidate.
+        ++data.currentSpawnIdx;
         data.lastReachPOI = 0;
-        data.pos = WorldPosition();
-        data.objectiveIdx = 0;
         data.pursuedLootGO.Clear();
         data.pursuedUseGO.Clear();
         data.pursuedUseTarget.Clear();
         return true;
     }
 
-    // at POI: drive toward specific objectives first
+    // 7. At spawn, within timeout: drive toward specific objectives.
+    //    Combat strategy engages adjacent quest mobs; loot/use
+    //    actions handle quest GOs and quest items.
     if (TryUseQuestItem(data.pursuedUseGO, data.pursuedUseTarget))
         return true;
     if (TryLootQuestGO(data.pursuedLootGO))
@@ -437,96 +452,9 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
     if (TryUseQuestGO(data.pursuedUseGO))
         return true;
 
-    // gather quests: roam for spawns. kill quests: yield to grind.
-    Quest const* quest = sObjectMgr->GetQuestTemplate(questId);
-    if (quest)
-    {
-        int32 obj = data.objectiveIdx;
-        bool isGatherObjective = false;
-        if (obj < QUEST_OBJECTIVES_COUNT)
-        {
-            int32 entry = quest->RequiredNpcOrGo[obj];
-            if (entry < 0)  // GO objective
-                isGatherObjective = true;
-            if (entry == 0 && obj < QUEST_ITEM_OBJECTIVES_COUNT && quest->RequiredItemId[obj])
-                isGatherObjective = true;
-        }
-        else if (obj < QUEST_OBJECTIVES_COUNT + QUEST_ITEM_OBJECTIVES_COUNT)
-        {
-            isGatherObjective = true;
-        }
-        // source-item quest: need to find the target to use it on
-        if (quest->GetSrcItemId())
-            isGatherObjective = true;
-
-        if (isGatherObjective)
-            return MoveRandomNear(20.0f);
-    }
-
-    // Kill-quest scout: at POI for 30s+ with no quest mob in sight
-    // means this cluster is empty. Switch to a different POI candidate
-    // (>50y away) if one exists; otherwise roam in place.
-    constexpr uint32 scoutTimeoutMs = 30 * 1000;
-    if (data.lastReachPOI && GetMSTimeDiffToNow(data.lastReachPOI) >= scoutTimeoutMs &&
-        !HasNearbyQuestMob(30.0f))
-    {
-        std::vector<POIInfo> poiInfo;
-        if (GetQuestPOIPosAndObjectiveIdx(questId, poiInfo))
-        {
-            std::vector<size_t> alternatives;
-            for (size_t i = 0; i < poiInfo.size(); ++i)
-            {
-                float dx = poiInfo[i].pos.x - data.pos.GetPositionX();
-                float dy = poiInfo[i].pos.y - data.pos.GetPositionY();
-                if (dx * dx + dy * dy > 50.0f * 50.0f)
-                    alternatives.push_back(i);
-            }
-            if (!alternatives.empty())
-            {
-                size_t pickIdx = alternatives[urand(0, alternatives.size() - 1)];
-                G3D::Vector2 newPoi = poiInfo[pickIdx].pos;
-                float dz = std::max(bot->GetMap()->GetHeight(newPoi.x, newPoi.y, MAX_HEIGHT),
-                                    bot->GetMap()->GetWaterLevel(newPoi.x, newPoi.y));
-                if (dz != INVALID_HEIGHT && dz != VMAP_INVALID_HEIGHT_VALUE)
-                {
-                    data.pos = WorldPosition(bot->GetMapId(), newPoi.x, newPoi.y, dz);
-                    data.objectiveIdx = poiInfo[pickIdx].objectiveIdx;
-                    data.lastReachPOI = 0;
-                    data.pursuedLootGO.Clear();
-                    data.pursuedUseGO.Clear();
-                    data.pursuedUseTarget.Clear();
-                    return true;
-                }
-            }
-        }
-        return MoveRandomNear(20.0f);
-    }
-
-    // kill quest: walk toward the marker before handing off to grind.
-    // lastReachPOI trips at ~10y so without this the bot fights on the
-    // edge and never reaches the dense cluster. Skip if a quest mob is
-    // in sight (might be the target) or a hostile is mid-pull.
-    if (bot->GetDistance(data.pos) > 5.0f)
-    {
-        if (HasNearbyQuestMob(30.0f))
-            return false;
-
-        GuidVector nearby = AI_VALUE(GuidVector, "possible targets");
-        bool hostileClose = false;
-        for (ObjectGuid guid : nearby)
-        {
-            Unit* u = botAI->GetUnit(guid);
-            if (u && u->IsAlive() && bot->GetDistance(u) < 15.0f)
-            {
-                hostileClose = true;
-                break;
-            }
-        }
-        if (!hostileClose)
-            return MoveFarTo(data.pos);
-    }
-
-    // yield to grind
+    // Yield this tick to combat/grind. No POI roam, no MoveRandomNear:
+    // bot stays at the spawn until either combat engages or the
+    // per-spawn timeout expires.
     return false;
 }
 

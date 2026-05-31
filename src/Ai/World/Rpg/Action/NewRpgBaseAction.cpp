@@ -20,6 +20,7 @@
 #include "Object.h"
 #include "ObjectAccessor.h"
 #include "OutdoorPvPMgr.h"
+#include "QuestSpawnIndex.h"
 #include "ObjectDefines.h"
 #include "ObjectGuid.h"
 #include "ObjectMgr.h"
@@ -1364,6 +1365,89 @@ bool NewRpgBaseAction::GetQuestPOIPosAndObjectiveIdx(uint32 questId, std::vector
         // LOG_DEBUG("playerbots", "[New rpg] {}: No available poi can be found for quest {}", bot->GetName(), questId);
         return false;
     }
+
+    return true;
+}
+
+bool NewRpgBaseAction::FetchQuestSpawnsForObjective(uint32 questId,
+                                                    std::vector<WorldPosition>& outSpawns,
+                                                    int32& outObjectiveIdx)
+{
+    outSpawns.clear();
+
+    Quest const* quest = sObjectMgr->GetQuestTemplate(questId);
+    if (!quest)
+        return false;
+
+    auto qStatusIt = bot->getQuestStatusMap().find(questId);
+    if (qStatusIt == bot->getQuestStatusMap().end())
+        return false;
+    QuestStatusData const& q_status = qStatusIt->second;
+
+    if (q_status.Status != QUEST_STATUS_INCOMPLETE)
+        return false;
+
+    uint32 const botMapId = bot->GetMapId();
+
+    // Iterate creature/GO objectives first, then required-item drops.
+    // The first one with at least one indexed spawn on the bot's map
+    // wins. Subsequent objectives are picked next call after this one
+    // completes or the spawn list is exhausted.
+    auto tryFetch = [&](int32 entry, int32 idx) -> bool
+    {
+        if (!entry)
+            return false;
+        auto const& spawns = sQuestSpawnIndex->GetSpawns(botMapId, entry);
+        if (spawns.empty())
+            return false;
+        outSpawns = spawns;
+        outObjectiveIdx = idx;
+        return true;
+    };
+
+    for (int i = 0; i < QUEST_OBJECTIVES_COUNT; ++i)
+    {
+        int32 npcOrGo = quest->RequiredNpcOrGo[i];
+        if (!npcOrGo)
+            continue;
+        if (q_status.CreatureOrGOCount[i] >= quest->RequiredNpcOrGoCount[i])
+            continue;  // objective complete
+        if (tryFetch(npcOrGo, i))
+            break;
+    }
+
+    if (outSpawns.empty())
+    {
+        // Required-item drops: source creature is encoded on the
+        // template (the loot-source mob). Use the creature spawn
+        // index for each ItemDrop entry.
+        for (int i = 0; i < QUEST_ITEM_OBJECTIVES_COUNT; ++i)
+        {
+            uint32 itemId = quest->RequiredItemId[i];
+            if (!itemId)
+                continue;
+            if (q_status.ItemCount[i] >= quest->RequiredItemCount[i])
+                continue;
+            // ItemDrop entries are encoded as the drop-source creature
+            // template id (positive). Fall back to scanning sObjectMgr
+            // creature-loot if/when we need stricter sourcing; for now
+            // this is best-effort.
+            int32 dropFrom = static_cast<int32>(quest->ItemDrop[i]);
+            if (dropFrom && tryFetch(dropFrom, QUEST_OBJECTIVES_COUNT + i))
+                break;
+        }
+    }
+
+    if (outSpawns.empty())
+        return false;
+
+    // Sort by distance from the bot so currentSpawnIdx=0 is the
+    // nearest. Reference's getNextDestination effectively does this
+    // each pick.
+    WorldPosition botPos(bot);
+    std::sort(outSpawns.begin(), outSpawns.end(),
+              [&botPos](WorldPosition const& a, WorldPosition const& b)
+              { return botPos.sqDistance(a) < botPos.sqDistance(b); });
 
     return true;
 }

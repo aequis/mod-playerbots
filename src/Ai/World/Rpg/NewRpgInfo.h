@@ -46,7 +46,17 @@ struct NewRpgInfo
         const Quest* quest{nullptr};
         uint32 questId{0};
         int32 objectiveIdx{0};
+        // Turn-in POI (DoCompletedQuest). Kept POI-based since this is
+        // the quest-giver location, not a mob spawn.
         WorldPosition pos{};
+        // Reference (cmangos) per-spawn destination pattern for
+        // incomplete objectives: candidate spawn positions sorted by
+        // distance, walked one-by-one (current =
+        // candidateSpawns[currentSpawnIdx]) instead of POI-wander.
+        // Refreshed when the objective changes or the list is
+        // exhausted.
+        std::vector<WorldPosition> candidateSpawns;
+        uint32 currentSpawnIdx{0};
         uint32 lastReachPOI{0};
         // committed target per objective type. stops zig-zagging in
         // dense spawn clusters when "nearest" would flip each tick.

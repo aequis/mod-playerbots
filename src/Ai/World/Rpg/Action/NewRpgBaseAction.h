@@ -76,6 +76,16 @@ protected:
 
 protected:
     bool GetQuestPOIPosAndObjectiveIdx(uint32 questId, std::vector<POIInfo>& poiInfo, bool toComplete = false);
+    // Reference per-spawn destination pattern: pick the first
+    // incomplete objective on `questId`, look up its spawns
+    // (creature OR gameobject — RequiredNpcOrGo encodes both) on
+    // the bot's current map, sort by distance from the bot, and
+    // return them in `outSpawns` with the resolved `outObjectiveIdx`.
+    // Returns false if no incomplete objective has spawns on the
+    // current map.
+    bool FetchQuestSpawnsForObjective(uint32 questId,
+                                      std::vector<WorldPosition>& outSpawns,
+                                      int32& outObjectiveIdx);
     static WorldPosition SelectRandomGrindPos(Player* bot);
     static WorldPosition SelectRandomCampPos(Player* bot);
     bool SelectRandomFlightTaxiNode(uint32& flightMasterEntry, WorldPosition& flightMasterPos, std::vector<uint32>& path);
