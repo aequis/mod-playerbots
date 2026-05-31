@@ -100,11 +100,14 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     }
 
     // Trim leading waypoints behind the bot, bridge with mmap probe if
-    // the new head requires it. May empty the path (collapsed) — let
-    // the next tick rebuild from a fresh start.
+    // the new head requires it. May empty the path (collapsed) — clear
+    // the cached path explicitly so the next tick re-resolves cleanly.
     path.makeShortCut(botPos, sPlayerbotAIConfig.reactDistance, bot);
     if (path.empty())
+    {
+        lastMove.setPath(path);
         return true;
+    }
 
     // Special head segment (portal / area-trigger / transport / flight)?
     // UpcommingSpecialMovement cuts the path so the head is the special;
@@ -150,24 +153,17 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         botAI->TellMasterNoFacing(tlog);
     }
 
-    // Walk dispatch.
+    // Walk dispatch — DispatchPathPoints handles any path size (single
+    // point falls through to a MovePoint dispatch matching reference's
+    // DispatchMovement). No size<2 branch on this side.
     std::vector<WorldPosition> const& pts = path.getPointPath();
     Movement::PointsArray points;
     points.reserve(pts.size());
     for (auto const& wp : pts)
         points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
 
-    if (points.size() < 2)
-    {
-        // Single-point fallback path (cmangos pattern: ResolveMovePath
-        // emits a single dest point if nothing else worked). Hand it
-        // to the engine's MovePoint via MoveTo.
-        EmitDebugMove("MoveFar", "single-point",
-                      dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ());
-        return MoveTo(dest.GetMapId(), dest.GetPositionX(),
-                      dest.GetPositionY(), dest.GetPositionZ(),
-                      false, false, false, false);
-    }
+    if (points.empty())
+        return false;
 
     if (!bot->IsMounted() && !bot->IsInCombat() &&
         bot->IsOutdoors() && bot->IsAlive())
@@ -180,31 +176,20 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
                                           Movement::PointsArray& points,
                                           char const* label)
 {
-    if (points.size() < 2)
+    if (points.empty())
         return false;
 
-    // MoveFarTo runs makeShortCut + setPath upstream now, so no need
-    // for the local prefix-trim or lastMove.setPath here.
-
-    for (auto& pt : points)
-        bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
-
-    // ClipPath now runs at MoveFarTo level on the TravelPath before the
-    // points array is built. No per-dispatch clip here.
-
-    if (points.size() < 2)
-        return false;
-
+    LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
     G3D::Vector3 const& last = points.back();
 
     float totalDist = 0.f;
     for (size_t i = 1; i < points.size(); ++i)
         totalDist += (points[i] - points[i - 1]).length();
 
-    LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
-
     // Skip cosmetic walking for random bots with no nearby player —
     // teleport to the path tail and schedule a cooldown instead.
+    // (Reference equivalent: long-distance teleport in MoveTo2 gated
+    // on !detailedMove && !HasPlayerNearby. Our gate is IsRandomBot.)
     if (sRandomPlayerbotMgr.IsRandomBot(bot))
     {
         WorldPosition tail(dest.GetMapId(), last.x, last.y, last.z);
@@ -228,8 +213,11 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
     }
 
     // Match master's walk pace when they're walking and within 5y.
+    // Reference picks FORCED_MOVEMENT_FLIGHT if bot IsFlying.
     ForcedMovement moveMode = FORCED_MOVEMENT_RUN;
-    if (Player* master = botAI->GetMaster())
+    if (bot->IsFlying())
+        moveMode = FORCED_MOVEMENT_FLIGHT;
+    else if (Player* master = botAI->GetMaster())
     {
         if (bot->IsFriendlyTo(master) && master->IsWalking() &&
             bot->GetExactDist2d(master) < 5.0f)
@@ -238,19 +226,48 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
         }
     }
 
-    // Clear emote/sit/cast so the spline can begin cleanly.
+    bool const generatePath = !bot->IsFlying() && !bot->isSwimming();
+
+    // Pre-dispatch normalization: clear looping emote, stand, interrupt
+    // non-melee cast. Reference does this at MoveTo2 level before
+    // DispatchMovement; we do it here at the equivalent point in the
+    // flow (immediately before the dispatch).
     bot->ClearEmoteState();
     if (!bot->IsStandState())
         bot->SetStandState(UNIT_STAND_STATE_STAND);
     if (bot->IsNonMeleeSpellCast(true))
         bot->InterruptNonMeleeSpells(true);
 
-    bot->GetMotionMaster()->Clear();
-    bot->GetMotionMaster()->MoveSplinePath(&points, moveMode);
+    // Per-point terrain clamp (reference does this on the converted
+    // pointPath). Skip transport-passenger conversion — our transport
+    // guard upstream prevents reaching here while on transport.
+    for (auto& pt : points)
+        bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
+
+    // Reference DispatchMovement: mm.Clear → MovePoint(last) (for
+    // non-free-flying or when generatePath disabled) → MovePath(all) →
+    // WaitForReach. The MovePoint primes the motion master with a
+    // single-target goal so even if MoveSplinePath fails to register a
+    // ≥2-point spline, the bot still has something to walk to.
+    MotionMaster* mm = bot->GetMotionMaster();
+    mm->Clear();
+
+    if (!generatePath || !bot->IsFreeFlying())
+    {
+        float const flySpeed = bot->IsFlying() ? bot->GetSpeed(MOVE_FLIGHT) : 0.0f;
+        mm->MovePoint(0, last.x, last.y, last.z, moveMode,
+                      flySpeed, 0.0f, generatePath, false);
+    }
+
+    if (points.size() >= 2)
+        mm->MoveSplinePath(&points, moveMode);
 
     EmitDebugMove("MoveFar", label, last.x, last.y, last.z);
 
-    // WaitForReach: leave ~10y headroom on long paths.
+    // WaitForReach equivalent: cache the dispatched target + duration
+    // on lastMove so the action chain knows the bot is mid-move.
+    // Leave ~10y headroom on long paths so we re-evaluate before
+    // arrival (matches reference's WaitForReach with a small slack).
     float waitDist = totalDist > sPlayerbotAIConfig.reactDistance
                          ? std::max(totalDist - 10.0f, 0.0f) : totalDist;
     UnitMoveType const speedType = (moveMode == FORCED_MOVEMENT_WALK) ? MOVE_WALK : MOVE_RUN;
