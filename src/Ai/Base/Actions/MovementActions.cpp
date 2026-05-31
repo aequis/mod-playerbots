@@ -29,6 +29,7 @@
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
 #include "Position.h"
+#include "PositionValue.h"
 #include "Random.h"
 #include "ServerFacade.h"
 #include "SharedDefines.h"
