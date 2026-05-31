@@ -31,6 +31,7 @@
 #include "Position.h"
 #include "PositionValue.h"
 #include "Random.h"
+#include "RandomPlayerbotMgr.h"
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 #include "SpellAuraEffects.h"
@@ -292,53 +293,30 @@ bool MovementAction::MoveToLOS(WorldObject* target, bool ranged)
     return false;
 }
 
-bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, bool react, bool normal_only,
-                            bool exact_waypoint, MovementPriority priority, bool lessDelay, bool backwards)
+bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, bool react,
+                            [[maybe_unused]] bool normal_only,
+                            bool exact_waypoint, MovementPriority priority, bool lessDelay,
+                            bool backwards, bool ignoreEnemyTargets)
 {
     UpdateMovementState();
     if (!IsMovingAllowed())
-    {
         return false;
-    }
     if (IsDuplicateMove(x, y, z))
-    {
         return false;
-    }
 
-    bool generatePath = !bot->IsFlying() && !bot->isSwimming();
-    bool disableMoveSplinePath =
+    bool const generatePath = !bot->IsFlying() && !bot->isSwimming();
+    bool const disableMoveSplinePath =
         sPlayerbotAIConfig.disableMoveSplinePath >= 2 ||
         (sPlayerbotAIConfig.disableMoveSplinePath == 1 && bot->InBattleground());
-    if (exact_waypoint || disableMoveSplinePath || !generatePath)
-    {
-        float distance = bot->GetExactDist(x, y, z);
-        if (distance > 0.01f)
-        {
-            if (!bot->IsStandState())
-                bot->SetStandState(UNIT_STAND_STATE_STAND);
 
-            // if (bot->IsNonMeleeSpellCast(true))
-            // {
-            //     bot->CastStop();
-            //     botAI->InterruptSpell();
-            // }
-            DoMovePoint(bot, x, y, z, generatePath, backwards);
-            float delay = 1000.0f * MoveDelay(distance, backwards);
-            if (lessDelay)
-            {
-                delay -= botAI->GetReactDelay();
-            }
-            delay = std::max(.0f, delay);
-            delay = std::min((float)sPlayerbotAIConfig.maxWaitForMove, delay);
-            AI_VALUE(LastMovement&, "last movement").Set(mapId, x, y, z, bot->GetOrientation(), delay, priority);
-            return true;
-        }
-    }
-    else
+    // Intentional bypass — skip the path-aware pipeline and dispatch
+    // straight to DoMovePoint. Cases:
+    //   exact_waypoint: caller wants the raw target, no clipping
+    //   disableMoveSplinePath: config-driven engine fallback
+    //   flying/swimming: pathfinding via engine MovePoint, not mmap probe
+    //   backwards: AC-specific back-shuffle; no parity in MoveTo2
+    if (exact_waypoint || disableMoveSplinePath || !generatePath || backwards)
     {
-        // Direct dispatch — engine MovePoint(generatePath=true) handles
-        // pathfinding. Avoid ±z probes: their "shortest path" preference
-        // can pick an unreachable ledge and air-walk via NOPATH fallback.
         float distance = bot->GetExactDist(x, y, z);
         if (distance > 0.01f)
         {
@@ -355,9 +333,14 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
                 .Set(mapId, x, y, z, bot->GetOrientation(), delay, priority);
             return true;
         }
+        return false;
     }
 
-    return false;
+    // Path-aware funnel: ResolveMovePath → makeShortCut →
+    // UpcommingSpecialMovement/HandleSpecialMovement → ClipPath →
+    // DispatchPathPoints. Matches the reference's MoveTo2 flow.
+    return MoveTo2(WorldPosition(mapId, x, y, z),
+                   idle, react, false, ignoreEnemyTargets, priority, lessDelay);
 }
 
 bool MovementAction::MoveTo(WorldObject* target, float distance, MovementPriority priority)
@@ -450,8 +433,11 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
 
     path.ShortenPathUntilDist(G3D::Vector3(tx, ty, tz), shortenTo);
     G3D::Vector3 endPos = path.GetPath().back();
+    // Combat callers pass ignoreEnemyTargets=true so ClipPath doesn't
+    // halt the chase at an intermediate hostile when funnelling through
+    // MoveTo2 — the chase target itself is the enemy we want to reach.
     bool moved = MoveTo(target->GetMapId(), endPos.x, endPos.y, endPos.z, false, false, false, false,
-                        MovementPriority::MOVEMENT_COMBAT, true);
+                        MovementPriority::MOVEMENT_COMBAT, true, false, /*ignoreEnemyTargets*/true);
     // Only emit on a successful new commit — combat ticks call this
     // many times per second and MoveTo internally suppresses while a
     // prior spline is still playing. Emitting before the suppression
@@ -2881,5 +2867,228 @@ bool MovementAction::BoardTransport(Transport* transport)
     transport->AddPassenger(bot, true);
     bot->StopMovingOnCurrentPos();
     EmitDebugMove("Transport:board", "snap", edgeX, edgeY, edgeZ);
+    return true;
+}
+
+bool MovementAction::MoveTo2(WorldPosition const& endPos,
+                             bool idle, [[maybe_unused]] bool react,
+                             [[maybe_unused]] bool noPath,
+                             bool ignoreEnemyTargets,
+                             MovementPriority priority,
+                             bool lessDelay)
+{
+    if (!endPos.isValid())
+        return false;
+
+    UpdateMovementState();
+    if (!IsMovingAllowed())
+        return false;
+
+    // Resume a transport ride if we're still on the same boat as last tick.
+    if (WaitForTransport())
+        return true;
+
+    WorldPosition botPos(bot);
+    LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+
+    // Short-stop: at destination — stop and clear the cached path.
+    float const totalDistance = botPos.distance(endPos);
+    if (totalDistance < sPlayerbotAIConfig.targetPosRecalcDistance)
+    {
+        if (!lastMove.lastPath.empty() &&
+            lastMove.lastPath.getBack().distance(endPos) <= totalDistance)
+            lastMove.clear();
+        bot->StopMoving();
+        return false;
+    }
+
+    // Per-tick re-resolve: rebuild the TravelPath from the bot's current
+    // position every tick. ResolveMovePath internally gates graph A* by
+    // sightDistance — short moves skip the graph and use a raw probe, so
+    // funnelling every MoveTo here is cost-bounded for in-zone moves.
+    TravelPath path = ResolveMovePath(botPos, endPos, lastMove);
+    lastMove.setPath(path);
+    if (path.empty())
+        return false;
+
+    // Trim leading waypoints behind the bot. Skip on transports — bot's
+    // world-space position diverges from path coords mid-ride.
+    if (!bot->GetTransport())
+        path.makeShortCut(botPos, sPlayerbotAIConfig.reactDistance, bot);
+    if (path.empty())
+    {
+        lastMove.setPath(path);
+        return true;
+    }
+
+    bool const onTransport = bot->GetTransport() != nullptr;
+    if (path.UpcommingSpecialMovement(botPos,
+                                      sPlayerbotAIConfig.reactDistance,
+                                      onTransport))
+    {
+        if (HandleSpecialMovement(path))
+            return true;
+        // Special handler declined (e.g. AREA_TRIGGER with entry → caller
+        // dispatches the walk into the trigger volume). Fall through.
+    }
+
+    // Transport guard: bot is on a transport but no special movement
+    // applies this tick — don't dispatch a walk spline (would fight the
+    // transport's own movement).
+    if (onTransport)
+        return false;
+
+    if (!path.empty())
+        lastMove.setPath(path);
+
+    // ClipPath — truncate at first hostile creature in range / non-walkable
+    // hop / drifted past reactDistance / > 125 sqDist jump. Combat callers
+    // pass ignoreEnemyTargets=true so the chase doesn't stop at an
+    // intermediate enemy.
+    path.ClipPath(botAI, bot, ignoreEnemyTargets);
+    if (path.empty())
+        return false;
+
+    // Telemetry: show the path's actual tail coords vs bot + dest so we
+    // can see whether the resolved path is heading toward the right place.
+    if (botAI->HasStrategy("debug move", BOT_STATE_NON_COMBAT))
+    {
+        WorldPosition tail = path.getBack();
+        float const tailToDest = tail.distance(endPos);
+        float const botToTail = bot->GetExactDist(tail.GetPositionX(),
+                                                  tail.GetPositionY(),
+                                                  tail.GetPositionZ());
+        std::ostringstream tlog;
+        tlog << "[PATH] tail=(" << std::fixed << std::setprecision(1)
+             << tail.GetPositionX() << "," << tail.GetPositionY() << ","
+             << tail.GetPositionZ()
+             << ") botToTail=" << botToTail << "y tailToDest=" << tailToDest << "y";
+        botAI->TellMasterNoFacing(tlog);
+    }
+
+    std::vector<WorldPosition> const& pts = path.getPointPath();
+    Movement::PointsArray points;
+    points.reserve(pts.size());
+    for (auto const& wp : pts)
+        points.emplace_back(wp.GetPositionX(), wp.GetPositionY(), wp.GetPositionZ());
+    if (points.empty())
+        return false;
+
+    if (!bot->IsMounted() && !bot->IsInCombat() &&
+        bot->IsOutdoors() && bot->IsAlive())
+        botAI->DoSpecificAction("check mount state", Event(), true);
+
+    bool const dispatched =
+        DispatchPathPoints(endPos, points, "walk", priority, lessDelay);
+
+    if (dispatched && !idle)
+        ClearIdleState();
+
+    return dispatched;
+}
+
+bool MovementAction::DispatchPathPoints(WorldPosition const& dest,
+                                        Movement::PointsArray& points,
+                                        char const* label,
+                                        MovementPriority priority,
+                                        bool lessDelay)
+{
+    if (points.empty())
+        return false;
+
+    LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+    G3D::Vector3 const& last = points.back();
+
+    float totalDist = 0.f;
+    for (size_t i = 1; i < points.size(); ++i)
+        totalDist += (points[i] - points[i - 1]).length();
+
+    // Skip cosmetic walking for random bots with no nearby player —
+    // teleport to the path tail and schedule a cooldown instead.
+    // (Reference equivalent: long-distance teleport in MoveTo2 gated
+    // on !detailedMove && !HasPlayerNearby. Our gate is IsRandomBot.)
+    if (sRandomPlayerbotMgr.IsRandomBot(bot))
+    {
+        WorldPosition tail(dest.GetMapId(), last.x, last.y, last.z);
+        time_t now = time(nullptr);
+        if (totalDist > sPlayerbotAIConfig.reactDistance &&
+            lastMove.nextTeleport <= now &&
+            !botAI->HasPlayerNearby(&tail))
+        {
+            float speed = std::max(bot->GetSpeed(MOVE_RUN), 0.1f);
+            lastMove.nextTeleport = now + (time_t)(totalDist / speed);
+
+            EmitDebugMove("MoveFar", "teleport",
+                          tail.GetPositionX(), tail.GetPositionY(), tail.GetPositionZ());
+
+            WorldPosition botPos(bot);
+            return bot->TeleportTo(dest.GetMapId(),
+                                   tail.GetPositionX(), tail.GetPositionY(),
+                                   tail.GetPositionZ(),
+                                   botPos.getAngleTo(tail));
+        }
+    }
+
+    // Match master's walk pace when they're walking and within 5y.
+    // AC's ForcedMovement enum has no FLIGHT variant — flying is handled
+    // via the MovePoint speed/flight flags below, not the moveMode.
+    ForcedMovement moveMode = FORCED_MOVEMENT_RUN;
+    if (Player* master = botAI->GetMaster())
+    {
+        if (bot->IsFriendlyTo(master) && master->IsWalking() &&
+            bot->GetExactDist2d(master) < 5.0f)
+        {
+            moveMode = FORCED_MOVEMENT_WALK;
+        }
+    }
+
+    bool const generatePath = !bot->IsFlying() && !bot->isSwimming();
+
+    // Pre-dispatch normalization: clear looping emote, stand, interrupt
+    // non-melee cast. Reference does this at MoveTo2 level before
+    // DispatchMovement; we do it here at the equivalent point in the flow.
+    bot->ClearEmoteState();
+    if (!bot->IsStandState())
+        bot->SetStandState(UNIT_STAND_STATE_STAND);
+    if (bot->IsNonMeleeSpellCast(true))
+        bot->InterruptNonMeleeSpells(true);
+
+    // Per-point terrain clamp.
+    for (auto& pt : points)
+        bot->UpdateAllowedPositionZ(pt.x, pt.y, pt.z);
+
+    // mm.Clear → MovePoint(last) → MoveSplinePath → WaitForReach.
+    MotionMaster* mm = bot->GetMotionMaster();
+    mm->Clear();
+
+    if (!generatePath || !bot->IsFreeFlying())
+    {
+        float const flySpeed = bot->IsFlying() ? bot->GetSpeed(MOVE_FLIGHT) : 0.0f;
+        mm->MovePoint(0, last.x, last.y, last.z, moveMode,
+                      flySpeed, 0.0f, generatePath, false);
+    }
+
+    if (points.size() >= 2)
+        mm->MoveSplinePath(&points, moveMode);
+
+    EmitDebugMove("MoveFar", label, last.x, last.y, last.z);
+
+    // WaitForReach equivalent: cache the dispatched target + duration on
+    // lastMove. Leave ~10y headroom on long paths so we re-evaluate
+    // before arrival.
+    float waitDist = totalDist > sPlayerbotAIConfig.reactDistance
+                         ? std::max(totalDist - 10.0f, 0.0f) : totalDist;
+    UnitMoveType const speedType = (moveMode == FORCED_MOVEMENT_WALK) ? MOVE_WALK : MOVE_RUN;
+    float speed = std::max(bot->GetSpeed(speedType), 0.1f);
+    float duration = 1000.0f * (waitDist / speed) + sPlayerbotAIConfig.reactDelay;
+    if (lessDelay)
+        duration -= sPlayerbotAIConfig.reactDelay;
+    duration = std::min(duration, (float)sPlayerbotAIConfig.maxWaitForMove);
+    if (duration < 0.0f)
+        duration = 0.0f;
+
+    lastMove.Set(bot->GetMapId(), last.x, last.y, last.z,
+                 bot->GetOrientation(), (uint32)duration, priority);
+
     return true;
 }

@@ -56,7 +56,35 @@ protected:
     bool MoveTo(uint32 mapId, float x, float y, float z, bool idle = false, bool react = false,
                 bool normal_only = false, bool exact_waypoint = false,
                 MovementPriority priority = MovementPriority::MOVEMENT_NORMAL, bool lessDelay = false,
-                bool backwards = false);
+                bool backwards = false, bool ignoreEnemyTargets = false);
+
+    // Path-aware funnel mirroring the reference movement implementation.
+    // Runs UpdateMovementState + IsMovingAllowed + WaitForTransport gates,
+    // applies the targetPosRecalcDistance short-stop, resolves a TravelPath
+    // via ResolveMovePath (which gates graph A* by sightDistance), trims
+    // with makeShortCut, handles special head segments
+    // (portal/area-trigger/transport/flight) via HandleSpecialMovement,
+    // clips at hostile creatures via ClipPath (unless ignoreEnemyTargets),
+    // and dispatches the resulting walk via DispatchPathPoints.
+    // MoveTo(mapId,...) delegates here unless an intentional bypass
+    // (exact_waypoint / disableMoveSplinePath / flying / swimming /
+    // backwards) routes the move straight to DoMovePoint.
+    bool MoveTo2(WorldPosition const& endPos,
+                 bool idle = false, bool react = false,
+                 bool noPath = false, bool ignoreEnemyTargets = false,
+                 MovementPriority priority = MovementPriority::MOVEMENT_NORMAL,
+                 bool lessDelay = false);
+
+    // Centralized walk dispatch. Applies inactive-bot teleport carve-out,
+    // masterWalking mode, pre-dispatch state cleanup (clear emote, stand,
+    // interrupt cast), per-point UpdateAllowedPositionZ, mm.Clear →
+    // MovePoint(last) → MoveSplinePath, and a WaitForReach equivalent
+    // that caches the destination + duration on lastMove.
+    bool DispatchPathPoints(WorldPosition const& dest,
+                            Movement::PointsArray& points,
+                            char const* label,
+                            MovementPriority priority = MovementPriority::MOVEMENT_NORMAL,
+                            bool lessDelay = false);
     bool MoveTo(WorldObject* target, float distance = 0.0f,
                 MovementPriority priority = MovementPriority::MOVEMENT_NORMAL);
     bool MoveNear(WorldObject* target, float distance = sPlayerbotAIConfig.contactDistance,

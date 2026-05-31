@@ -82,15 +82,6 @@ protected:
     bool RandomChangeStatus(std::vector<NewRpgStatus> candidateStatus);
     bool CheckRpgStatusAvailable(NewRpgStatus status);
 
-private:
-    // Centralized dispatch helper. Applies underwater fixup, ClipPath
-    // (truncate at first hostile in attack range with LOS, level+5 cap),
-    // inactive-bot teleport (with self-bot carve-out), masterWalking
-    // mode, pre-dispatch state cleanup, then dispatches via
-    // MoveSplinePath and schedules via WaitForReach formula.
-    bool DispatchPathPoints(WorldPosition const& dest,
-                            Movement::PointsArray& points,
-                            char const* label);
 };
 
 #endif
