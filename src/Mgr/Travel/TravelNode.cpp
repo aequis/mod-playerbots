@@ -12,7 +12,6 @@
 #include <unordered_set>
 
 #include "BudgetValues.h"
-#include "DBCStores.h"
 #include "MapMgr.h"
 #include "PathGenerator.h"
 #include "Playerbots.h"
@@ -758,14 +757,11 @@ bool TravelPath::UpcommingSpecialMovement(WorldPosition startPos,
     {
         if (startP->entry)
         {
-            // Reference also verifies the DBC AreaTriggerEntry record
-            // exists (cmangos sAreaTriggerStore.LookupEntry). AC's
-            // sAreaTriggerStore is the same DBC store. Skip the trigger
-            // node if the DBC record is missing — likely a stale entry
-            // in the baked dataset.
-            if (!sAreaTriggerStore.LookupEntry(startP->entry))
-                return false;
-
+            // Reference also checks an AreaTriggerEntry DBC store
+            // (sAreaTriggerStore). AC doesn't expose a separate DBC
+            // store for area triggers — sObjectMgr->GetAreaTrigger is
+            // the loaded view of the same data, so it's the only
+            // existence check we need on this side.
             AreaTrigger const* at = sObjectMgr->GetAreaTrigger(startP->entry);
             if (!at)
                 return false;

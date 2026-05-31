@@ -2716,11 +2716,14 @@ bool MovementAction::HandleSpecialMovement(TravelPath& path)
                 GameObject* go = botAI->GetGameObject(guid);
                 if (!go || go->GetEntry() != cur.entry)
                     continue;
-                // MAX_GAMEOBJECT_TYPE accepts any type — reference uses
-                // this rather than restricting to SPELLCASTER, so GOOBER
-                // portals (which we accept at the goInfo->type check
-                // above) aren't filtered out here.
-                if (!bot->GetGameObjectIfCanInteractWith(guid, MAX_GAMEOBJECT_TYPE))
+                // AC's GetGameObjectIfCanInteractWith does a strict
+                // type-equality check (no "any type" sentinel like the
+                // reference's MAX_GAMEOBJECT_TYPE). Pass the GO's
+                // actual type so both SPELLCASTER and GOOBER portals
+                // (accepted at the goInfo->type check above) pass the
+                // range + non-"Point" interactability gate here.
+                if (!bot->GetGameObjectIfCanInteractWith(guid,
+                        static_cast<GameobjectTypes>(go->GetGoType())))
                     continue;
 
                 WorldPacket packet(CMSG_GAMEOBJ_USE);
