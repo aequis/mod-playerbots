@@ -129,6 +129,13 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     if (onTransport)
         return false;
 
+    // Re-cache the (potentially cut) path so next tick's 10% reuse and
+    // WaitForTransport gates see the latest shape. Reference does this
+    // at the same point in MoveTo2 (after UpcommingSpecialMovement
+    // examined / trimmed the path, before ClipPath / dispatch).
+    if (!path.empty())
+        lastMove.setPath(path);
+
     // ClipPath — truncate at first hostile creature in range / non-walkable
     // hop / drifted past reactDistance / > 125 sqDist jump.
     path.ClipPath(botAI, bot, false);
