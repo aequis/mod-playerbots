@@ -215,11 +215,10 @@ bool NewRpgBaseAction::DispatchPathPoints(WorldPosition const& dest,
     }
 
     // Match master's walk pace when they're walking and within 5y.
-    // Reference picks FORCED_MOVEMENT_FLIGHT if bot IsFlying.
+    // AC's ForcedMovement enum has no FLIGHT variant — flying is handled
+    // via the MovePoint speed/flight flags below, not the moveMode.
     ForcedMovement moveMode = FORCED_MOVEMENT_RUN;
-    if (bot->IsFlying())
-        moveMode = FORCED_MOVEMENT_FLIGHT;
-    else if (Player* master = botAI->GetMaster())
+    if (Player* master = botAI->GetMaster())
     {
         if (bot->IsFriendlyTo(master) && master->IsWalking() &&
             bot->GetExactDist2d(master) < 5.0f)
