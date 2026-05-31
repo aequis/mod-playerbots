@@ -3123,26 +3123,51 @@ bool MovementAction::WaitForTransport()
     if (!lastMove.lastTransportEntry)
         return false;
 
+    // Combined gate (matches reference exactly): all of these must hold
+    // for us to be considered "mid-ride" on the recorded transport.
     Transport* transport = bot->GetTransport();
-    if (!transport || transport->GetEntry() != lastMove.lastTransportEntry)
+    if (!transport ||
+        transport->GetEntry() != lastMove.lastTransportEntry ||
+        lastMove.lastPath.empty() ||
+        lastMove.lastPath[0].type != PathNodeType::NODE_TRANSPORT ||
+        lastMove.lastPath[0].entry != lastMove.lastTransportEntry)
     {
         lastMove.lastTransportEntry = 0;
         return false;
     }
 
-    // Mid-ride only when the cached path head is still the boarded
-    // transport node. If the head moved (next tick's resolution shifted
-    // it off, or we cut to a disembark point), let MoveFarTo continue
-    // so HandleSpecialMovement can dispatch the disembark.
-    if (lastMove.lastPath.empty())
+    // Run UpcommingSpecialMovement on the cached path with maxDist=0 to
+    // see if the head segment is a disembark-ready special (reference
+    // pattern). No special → still mid-ride, return false to let
+    // MoveFarTo continue normally.
+    TravelPath path = lastMove.lastPath;
+    if (!path.UpcommingSpecialMovement(WorldPosition(bot), 0.0f, /*onTransport=*/true))
         return false;
 
-    PathNodePoint const& front = lastMove.lastPath[0];
-    if (front.type != PathNodeType::NODE_TRANSPORT ||
-        front.entry != lastMove.lastTransportEntry)
-        return false;
+    // Disembark: head is the transport node where we should get off,
+    // next is the world-position dock to land at. Reference uses
+    // UseTransport(ai, dock.entry, dock.point, tele.point, type>0)
+    // — we don't have UseTransport, so inline the equivalent.
+    PathNodePoint const& dock = path[0];
+    if (path.size() < 2)
+        return true;  // no telePoint to land at; keep waiting
+    PathNodePoint const& tele = path[1];
 
-    return true;
+    transport->RemovePassenger(bot);
+    bot->StopMovingOnCurrentPos();
+    bool const teleported = bot->TeleportTo(tele.point.GetMapId(),
+                                            tele.point.GetPositionX(),
+                                            tele.point.GetPositionY(),
+                                            tele.point.GetPositionZ(),
+                                            bot->GetOrientation());
+    if (!teleported)
+        return true;  // try again next tick
+
+    lastMove.lastTransportEntry = 0;
+    // Suppress unused-variable on `dock` — kept for parity with reference's
+    // UseTransport(entry, dockPoint, telePoint, ...) signature shape.
+    (void)dock;
+    return false;
 }
 
 bool MovementAction::HandleSpecialMovement(TravelPath& path)
