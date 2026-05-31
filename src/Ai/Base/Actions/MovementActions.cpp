@@ -33,6 +33,7 @@
 #include "Random.h"
 #include "ServerFacade.h"
 #include "SharedDefines.h"
+#include "SpellAuraEffects.h"
 #include "SpellInfo.h"
 #include "Timer.h"
 #include "Transport.h"
