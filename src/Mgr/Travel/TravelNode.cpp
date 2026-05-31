@@ -475,111 +475,6 @@ bool TravelNode::cropUselessLinks()
 
     return hasRemoved;
 
-    /*
-
-    //std::vector<std::pair<TravelNode*, TravelNode*>> toRemove;
-    for (auto& firstLink : getLinks())
-    {
-
-        TravelNode* firstNode = firstLink.first;
-        float firstLength = firstLink.second.getDistance();
-        for (auto& secondLink : getLinks())
-        {
-            TravelNode* secondNode = secondLink.first;
-            float secondLength = secondLink.second.getDistance();
-
-            if (firstNode == secondNode)
-                continue;
-
-            if (std::find(toRemove.begin(), toRemove.end(), [firstNode, secondNode](std::pair<TravelNode*, TravelNode*>
-    pair) {return pair.first == firstNode || pair.first == secondNode;}) != toRemove.end()) continue;
-
-            if (firstNode->hasLinkTo(secondNode))
-            {
-                //Is it quicker to go past first node to reach second node instead of going directly?
-                if (firstLength + firstNode->linkLengthTo(secondNode) < secondLength * 1.1)
-                {
-                    if (secondNode->hasLinkTo(this) && !firstNode->hasLinkTo(this))
-                        continue;
-
-                    toRemove.push_back(make_pair(this, secondNode));
-                }
-            }
-            else
-            {
-                TravelNodeRoute route = TravelNodeMap::instance().GetNodeRoute(firstNode, secondNode, nullptr);
-
-                if (route.isEmpty())
-                    continue;
-
-                if (route.hasNode(this))
-                    continue;
-
-                //Is it quicker to go past first (and multiple) nodes to reach the second node instead of going
-    directly? if (firstLength + route.getLength() < secondLength * 1.1)
-                {
-                    if (secondNode->hasLinkTo(this) && !firstNode->hasLinkTo(this))
-                        continue;
-
-                    toRemove.push_back(make_pair(this, secondNode));
-                }
-            }
-        }
-
-        //Reverse cleanup. This is needed when we add a node in an existing map.
-        if (firstNode->hasLinkTo(this))
-        {
-            firstLength = firstNode->getPathTo(this)->getDistance();
-
-            for (auto& secondLink : firstNode->getLinks())
-            {
-                TravelNode* secondNode = secondLink.first;
-                float secondLength = secondLink.second.getDistance();
-
-                if (this == secondNode)
-                    continue;
-
-                if (std::find(toRemove.begin(), toRemove.end(), [firstNode, secondNode](std::pair<TravelNode*,
-    TravelNode*> pair) {return pair.first == firstNode || pair.first == secondNode; }) != toRemove.end()) continue;
-
-                if (firstNode->hasLinkTo(secondNode))
-                {
-                    //Is it quicker to go past first node to reach second node instead of going directly?
-                    if (firstLength + firstNode->linkLengthTo(secondNode) < secondLength * 1.1)
-                    {
-                        if (secondNode->hasLinkTo(this) && !firstNode->hasLinkTo(this))
-                            continue;
-
-                        toRemove.push_back(make_pair(this, secondNode));
-                    }
-                }
-                else
-                {
-                    TravelNodeRoute route = TravelNodeMap::instance().GetNodeRoute(firstNode, secondNode, nullptr);
-
-                    if (route.isEmpty())
-                        continue;
-
-                    if (route.hasNode(this))
-                        continue;
-
-                    //Is it quicker to go past first (and multiple) nodes to reach the second node instead of going
-    directly? if (firstLength + route.getLength() < secondLength * 1.1)
-                    {
-                        if (secondNode->hasLinkTo(this) && !firstNode->hasLinkTo(this))
-                            continue;
-
-                        toRemove.push_back(make_pair(this, secondNode));
-                    }
-                }
-            }
-        }
-
-    }
-
-    for (auto& nodePair : toRemove)
-        nodePair.first->unlinkNode(nodePair.second, false);
-        */
 }
 
 bool TravelNode::isEqual(TravelNode* compareNode)
@@ -2319,16 +2214,6 @@ void TravelNodeMap::printNodeStore()
             out << "," << (node->isTransport() ? "true" : "false") << "," << node->getTransportId();
         out << "});";
 
-        /*
-                out << std::fixed << std::setprecision(2) << "        nodes[" << i << "] =
-           TravelNodeMap::instance().addNode(&WorldPosition(" << node->GetMapId() << "," << node->getX() << "f," << node->getY()
-           << "f," << node->getZ() << "f,"<< node->getO() <<"f), \""
-                    << name << "\", " << (node->isImportant() ? "true" : "false") << ", true";
-                if (node->isTransport())
-                    out << "," << (node->isTransport() ? "true" : "false") << "," << node->getTransportId();
-
-                out << ");";
-                */
         sPlayerbotAIConfig.log(nodeStore, out.str().c_str());
 
         saveNodes.insert(std::make_pair(node, i));

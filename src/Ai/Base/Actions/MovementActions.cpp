@@ -12,7 +12,6 @@
 #include <string>
 
 #include "Corpse.h"
-#include "DBCStores.h"
 #include "Event.h"
 #include "FleeManager.h"
 #include "G3D/Vector3.h"
@@ -20,11 +19,8 @@
 #include "LastMovementValue.h"
 #include "LootObjectStack.h"
 #include "Map.h"
-#include "ModelIgnoreFlags.h"
 #include "MotionMaster.h"
-#include "MoveSpline.h"
 #include "MoveSplineInitArgs.h"
-#include "TravelNode.h"
 #include "MovementGenerator.h"
 #include "ObjectDefines.h"
 #include "ObjectGuid.h"
@@ -33,15 +29,13 @@
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
 #include "Position.h"
-#include "PositionValue.h"
 #include "Random.h"
 #include "ServerFacade.h"
 #include "SharedDefines.h"
-#include "SpellAuraEffects.h"
 #include "SpellInfo.h"
-#include "Stances.h"
 #include "Timer.h"
 #include "Transport.h"
+#include "TravelNode.h"
 #include "Unit.h"
 #include "WaypointMovementGenerator.h"
 
@@ -719,58 +713,6 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
         return false;
     }
 
-    /*
-    if (!bot->InBattleground()
-        && ServerFacade::instance().IsDistanceLessOrEqualThan(ServerFacade::instance().GetDistance2d(bot, target->GetPositionX(),
-    target->GetPositionY()), sPlayerbotAIConfig.sightDistance)
-        && abs(bot->GetPositionZ() - target->GetPositionZ()) >= sPlayerbotAIConfig.spellDistance &&
-    botAI->HasRealPlayerMaster()
-        && (target->GetMapId() && bot->GetMapId() != target->GetMapId()))
-    {
-        bot->StopMoving();
-        bot->GetMotionMaster()->Clear();
-
-        float x = bot->GetPositionX();
-        float y = bot->GetPositionY();
-        float z = target->GetPositionZ();
-        if (target->GetMapId() && bot->GetMapId() != target->GetMapId())
-        {
-            if ((target->GetMap() && target->GetMap()->IsBattlegroundOrArena()) || (bot->GetMap() &&
-    bot->GetMap()->IsBattlegroundOrArena())) return false;
-
-            bot->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_TELEPORTED | AURA_INTERRUPT_FLAG_CHANGE_MAP);
-            bot->TeleportTo(target->GetMapId(), x, y, z, bot->GetOrientation());
-        }
-        else
-        {
-            bot->Relocate(x, y, z, bot->GetOrientation());
-        }
-
-        AI_VALUE(LastMovement&, "last movement").Set(target);
-        ClearIdleState();
-        return true;
-    }
-
-    if (!IsMovingAllowed(target) && botAI->HasRealPlayerMaster())
-    {
-        if ((target->GetMap() && target->GetMap()->IsBattlegroundOrArena()) || (bot->GetMap() &&
-    bot->GetMap()->IsBattlegroundOrArena())) return false;
-
-        if (bot->isDead() && botAI->GetMaster()->IsAlive())
-        {
-            bot->ResurrectPlayer(1.0f, false);
-            botAI->TellMasterNoFacing("I live, again!");
-        }
-        else
-            botAI->TellError("I am stuck while following");
-
-        bot->CombatStop(true);
-        botAI->TellMasterNoFacing("I will there soon.");
-        bot->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_TELEPORTED | AURA_INTERRUPT_FLAG_CHANGE_MAP);
-        bot->TeleportTo(target->GetMapId(), target->GetPositionX(), target->GetPositionY(), target->GetPositionZ(),
-    target->GetOrientation()); return false;
-    }
-    */
 
     // Move to target corpse if alive.
     if (!target->IsAlive() && bot->IsAlive() && target->GetGUID().IsPlayer())

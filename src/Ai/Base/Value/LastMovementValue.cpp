@@ -12,7 +12,6 @@ LastMovement::LastMovement() { clear(); }
 LastMovement::LastMovement(LastMovement& other)
     : taxiNodes(other.taxiNodes),
       taxiMaster(other.taxiMaster),
-      lastFollow(other.lastFollow),
       lastAreaTrigger(other.lastAreaTrigger),
       lastFlee(other.lastFlee)
 {
@@ -27,7 +26,6 @@ void LastMovement::clear()
 {
     lastMoveShort = WorldPosition();
     lastPath.clear();
-    lastFollow = nullptr;
     lastAreaTrigger = 0;
     lastFlee = 0;
     nextTeleport = 0;
@@ -36,17 +34,18 @@ void LastMovement::clear()
     lastTransportEntry = 0;
 }
 
-void LastMovement::Set(Unit* follow)
+void LastMovement::Set([[maybe_unused]] Unit* follow)
 {
+    // Legacy signature — `follow` is ignored (lastFollow field removed).
+    // The function still serves callers that want a soft-reset:
+    // clears short + path, resets msTime/priority via the chain below.
     Set(0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
     setShort(WorldPosition());
     setPath(TravelPath());
-    lastFollow = follow;
 }
 
 void LastMovement::Set(uint32 mapId, float x, float y, float z, float ori, float delayTime, MovementPriority pri)
 {
-    lastFollow = nullptr;
     lastMoveShort = WorldPosition(mapId, x, y, z, ori);
     msTime = getMSTime();
     priority = pri;
@@ -55,7 +54,6 @@ void LastMovement::Set(uint32 mapId, float x, float y, float z, float ori, float
 void LastMovement::setShort(WorldPosition point)
 {
     lastMoveShort = point;
-    lastFollow = nullptr;
 }
 
 void LastMovement::setPath(TravelPath path) { lastPath = path; }

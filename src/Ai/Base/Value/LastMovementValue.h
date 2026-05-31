@@ -33,7 +33,6 @@ public:
     {
         taxiNodes = other.taxiNodes;
         taxiMaster = other.taxiMaster;
-        lastFollow = other.lastFollow;
         lastAreaTrigger = other.lastAreaTrigger;
         lastMoveShort = other.lastMoveShort;
         lastPath = other.lastPath;
@@ -53,7 +52,6 @@ public:
 
     std::vector<uint32> taxiNodes;
     ObjectGuid taxiMaster;
-    Unit* lastFollow;
     uint32 lastAreaTrigger;
     time_t lastFlee;
     WorldPosition lastMoveShort;
