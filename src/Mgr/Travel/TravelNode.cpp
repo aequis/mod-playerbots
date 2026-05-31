@@ -2716,8 +2716,6 @@ std::vector<uint32> TravelNodeMap::BuildPath(uint32 fromNode, uint32 toNode,
     return path;
 }
 
-}
-
 void TravelNodeMap::PrecomputeReachability()
 {
     // Find connected components via BFS
