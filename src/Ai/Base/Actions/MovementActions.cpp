@@ -2877,7 +2877,7 @@ bool MovementAction::MoveTo2(WorldPosition const& endPos,
                              MovementPriority priority,
                              bool lessDelay)
 {
-    if (!endPos.isValid())
+    if (!endPos.IsValid())
         return false;
 
     UpdateMovementState();
