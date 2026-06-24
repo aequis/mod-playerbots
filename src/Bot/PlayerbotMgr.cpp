@@ -68,6 +68,36 @@ private:
 std::unordered_set<ObjectGuid> BotInitGuard::botsBeingInitialized;
 std::unordered_map<ObjectGuid, uint32> PlayerbotHolder::botLoading;
 
+namespace
+{
+bool IsSavedRandomBot(ObjectGuid guid)
+{
+    if (!guid)
+        return false;
+
+    ObjectGuid::LowType lowGuid = guid.GetCounter();
+    if (sRandomPlayerbotMgr.IsRandomBot(lowGuid))
+        return true;
+
+    uint32 accountId = sCharacterCache->GetCharacterAccountIdByGuid(guid);
+    if (!accountId || !sPlayerbotAIConfig.IsInRandomAccountList(accountId))
+        return false;
+
+    QueryResult result = PlayerbotsDatabase.Query(
+        "SELECT 1 FROM playerbots_random_bots WHERE bot = {} AND event = 'add' LIMIT 1", lowGuid);
+    return result != nullptr;
+}
+
+bool IsRestorablePartyBot(ObjectGuid guid, uint32 masterAccountId)
+{
+    ObjectGuid::LowType lowGuid = guid.GetCounter();
+    if (IsSavedRandomBot(guid) || sRandomPlayerbotMgr.IsAddclassBot(lowGuid))
+        return true;
+
+    return masterAccountId && sCharacterCache->GetCharacterAccountIdByGuid(guid) == masterAccountId;
+}
+}
+
 PlayerbotHolder::PlayerbotHolder() : PlayerbotAIBase(false) {}
 class PlayerbotLoginQueryHolder : public LoginQueryHolder
 {
@@ -105,12 +135,15 @@ void PlayerbotHolder::AddPlayerBot(ObjectGuid playerGuid, uint32 masterAccountId
     bool sameGuild = sPlayerbotAIConfig.allowGuildBots && guild && guild->GetMember(playerGuid);
     bool addClassBot = sRandomPlayerbotMgr.IsAddclassBot(playerGuid.GetCounter());
     bool linkedAccount = sPlayerbotAIConfig.allowTrustedAccountBots && IsAccountLinked(accountId, masterAccountId);
+    bool savedRandomPartyBot =
+        masterPlayer && masterPlayer->GetGroup() && masterPlayer->GetGroup()->IsMember(playerGuid) &&
+        IsSavedRandomBot(playerGuid);
 
     bool allowed = true;
     std::ostringstream out;
     std::string botName;
     sCharacterCache->GetCharacterNameByGuid(playerGuid, botName);
-    if (!isRndbot && !sameAccount && !sameGuild && !addClassBot && !linkedAccount)
+    if (!isRndbot && !sameAccount && !sameGuild && !addClassBot && !linkedAccount && !savedRandomPartyBot)
     {
         allowed = false;
         out << "Failure: You are not allowed to control bot " << botName.c_str();
@@ -1636,6 +1669,31 @@ void PlayerbotMgr::OnBotLoginInternal(Player* const bot)
     LOG_INFO("playerbots", "Bot {} logged in", bot->GetName().c_str());
 }
 
+void PlayerbotMgr::RestorePartyBots(Player* player)
+{
+    if (!player || !player->GetGroup())
+        return;
+
+    WorldSession* session = player->GetSession();
+    if (!session)
+        return;
+
+    uint32 accountId = session->GetAccountId();
+    Group::MemberSlotList const& slots = player->GetGroup()->GetMemberSlots();
+    for (Group::MemberSlotList::const_iterator itr = slots.begin(); itr != slots.end(); ++itr)
+    {
+        ObjectGuid guid = itr->guid;
+        if (guid == player->GetGUID() || ObjectAccessor::FindPlayer(guid))
+            continue;
+
+        if (!IsRestorablePartyBot(guid, accountId))
+            continue;
+
+        LOG_INFO("playerbots", "Restoring offline party bot {} for {}", itr->name, player->GetName());
+        AddPlayerBot(guid, accountId);
+    }
+}
+
 void PlayerbotMgr::OnPlayerLogin(Player* player)
 {
     if (!player)
@@ -1661,6 +1719,8 @@ void PlayerbotMgr::OnPlayerLogin(Player* player)
 
     if (sPlayerbotAIConfig.selfBotLevel > 2)
         HandlePlayerbotCommand("self", player);
+
+    RestorePartyBots(player);
 
     if (!sPlayerbotAIConfig.botAutologin)
         return;

@@ -90,6 +90,8 @@ protected:
     void CheckTellErrors(uint32 elapsed);
 
 private:
+    void RestorePartyBots(Player* player);
+
     Player* const master;
     PlayerBotErrorMap errors;
     time_t lastErrorTell;
