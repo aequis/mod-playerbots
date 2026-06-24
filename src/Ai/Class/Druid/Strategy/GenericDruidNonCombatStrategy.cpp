@@ -191,6 +191,8 @@ void GenericDruidNonCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trig
     {
         triggers.push_back(new TriggerNode("often", { NextAction("apply stone", 1.0f) }));
         triggers.push_back(new TriggerNode("prowl", { NextAction("prowl", ACTION_INTERRUPT) }));
+        triggers.push_back(new TriggerNode("follow master prowl", { NextAction("prowl", ACTION_INTERRUPT) }));
+        triggers.push_back(new TriggerNode("follow master unprowl", { NextAction("unprowl", ACTION_INTERRUPT) }));
     }
 
 }

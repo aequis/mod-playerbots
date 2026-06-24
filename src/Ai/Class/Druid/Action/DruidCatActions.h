@@ -149,6 +149,18 @@ public:
     CastProwlAction(PlayerbotAI* botAI) : CastBuffSpellAction(botAI, "prowl") {}
 };
 
+class UnprowlAction : public Action
+{
+public:
+    UnprowlAction(PlayerbotAI* botAI) : Action(botAI, "unprowl") {}
+
+    bool Execute(Event /*event*/) override
+    {
+        botAI->RemoveAura("prowl");
+        return true;
+    }
+};
+
 class CastDashAction : public CastBuffSpellAction
 {
 public:

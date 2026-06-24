@@ -9,6 +9,15 @@
 #include "Playerbots.h"
 #include "ServerFacade.h"
 
+namespace
+{
+bool IsMasterStealthed(PlayerbotAI* botAI)
+{
+    Unit* master = botAI->GetMaster();
+    return master && botAI->HasAnyAuraOf(master, "stealth", "prowl", nullptr);
+}
+}
+
 bool MarkOfTheWildTrigger::IsActive()
 {
     return BuffTrigger::IsActive() && !botAI->HasAura("gift of the wild", GetTarget());
@@ -54,6 +63,9 @@ bool ProwlTrigger::IsActive()
     if (bot->HasSpellCooldown(prowlId))
         return false;
 
+    if (IsMasterStealthed(botAI))
+        return true;
+
     float distance = 30.f;
 
     Unit* target = AI_VALUE(Unit*, "enemy player target");
@@ -76,6 +88,26 @@ bool ProwlTrigger::IsActive()
         distance += 15;
 
     return target && ServerFacade::instance().GetDistance2d(bot, target) < distance;
+}
+
+bool FollowMasterProwlTrigger::IsActive()
+{
+    if (botAI->HasAura("prowl", bot) || bot->IsInCombat())
+        return false;
+
+    if (!botAI->HasSpell("prowl"))
+        return false;
+
+    uint32 const prowlId = AI_VALUE2(uint32, "spell id", "prowl");
+    if (bot->HasSpellCooldown(prowlId))
+        return false;
+
+    return IsMasterStealthed(botAI);
+}
+
+bool FollowMasterUnprowlTrigger::IsActive()
+{
+    return botAI->HasAura("prowl", bot) && !bot->IsInCombat() && botAI->GetMaster() && !IsMasterStealthed(botAI);
 }
 
 const std::set<uint32> HurricaneChannelCheckTrigger::HURRICANE_SPELL_IDS = {

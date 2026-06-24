@@ -128,6 +128,8 @@ public:
         creators["predator's swiftness and combat party member dead"] = &DruidTriggerFactoryInternal::predators_swiftness_and_combat_party_member_dead;
         creators["clearcasting and medium aoe"] = &DruidTriggerFactoryInternal::clearcasting_and_medium_aoe;
         creators["prowl"] = &DruidTriggerFactoryInternal::prowl_trigger;
+        creators["follow master prowl"] = &DruidTriggerFactoryInternal::follow_master_prowl;
+        creators["follow master unprowl"] = &DruidTriggerFactoryInternal::follow_master_unprowl;
         creators["rejuvenation blanket"] = &DruidTriggerFactoryInternal::rejuvenation_blanket;
         creators["wild growth blanket"] = &DruidTriggerFactoryInternal::wild_growth_blanket;
         creators["aquatic form"] = &DruidTriggerFactoryInternal::aquatic_form;
@@ -184,6 +186,8 @@ private:
     static Trigger* predators_swiftness_and_combat_party_member_dead(PlayerbotAI* ai) { return new TwoTriggers(ai, "predator's swiftness", "combat party member dead"); }
     static Trigger* clearcasting_and_medium_aoe(PlayerbotAI* ai) { return new TwoTriggers(ai, "clearcasting", "medium aoe"); }
     static Trigger* prowl_trigger(PlayerbotAI* ai) { return new ProwlTrigger(ai); }
+    static Trigger* follow_master_prowl(PlayerbotAI* ai) { return new FollowMasterProwlTrigger(ai); }
+    static Trigger* follow_master_unprowl(PlayerbotAI* ai) { return new FollowMasterUnprowlTrigger(ai); }
     static Trigger* rejuvenation_blanket(PlayerbotAI* ai) { return new BuffOnPartyTrigger(ai, "rejuvenation"); }
     static Trigger* wild_growth_blanket(PlayerbotAI* ai) { return new BuffOnPartyTrigger(ai, "wild growth"); }
     static Trigger* aquatic_form(PlayerbotAI* ai) { return new AquaticFormTrigger(ai); }
@@ -273,6 +277,7 @@ public:
         creators["bash on enemy healer"] = &DruidAiObjectContextInternal::bash_on_enemy_healer;
         creators["nature's swiftness"] = &DruidAiObjectContextInternal::natures_swiftness;
         creators["prowl"] = &DruidAiObjectContextInternal::prowl;
+        creators["unprowl"] = &DruidAiObjectContextInternal::unprowl;
         creators["dash"] = &DruidAiObjectContextInternal::dash;
         creators["shred"] = &DruidAiObjectContextInternal::shred;
         creators["ravage"] = &DruidAiObjectContextInternal::ravage;
@@ -372,6 +377,7 @@ private:
     static Action* ravage(PlayerbotAI* botAI) { return new CastRavageAction(botAI); }
     static Action* pounce(PlayerbotAI* botAI) { return new CastPounceAction(botAI); }
     static Action* prowl(PlayerbotAI* botAI) { return new CastProwlAction(botAI); }
+    static Action* unprowl(PlayerbotAI* botAI) { return new UnprowlAction(botAI); }
     static Action* dash(PlayerbotAI* botAI) { return new CastDashAction(botAI); }
     static Action* shred(PlayerbotAI* botAI) { return new CastShredAction(botAI); }
     static Action* wild_growth_on_party(PlayerbotAI* ai) { return new CastWildGrowthOnPartyAction(ai); }

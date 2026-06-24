@@ -5,7 +5,17 @@
 
 #include "DruidShapeshiftActions.h"
 
+#include "PlayerbotAI.h"
 #include "Playerbots.h"
+
+namespace
+{
+bool ShouldPreserveProwl(PlayerbotAI* botAI, Player* bot)
+{
+    Unit* master = botAI->GetMaster();
+    return botAI->HasAura("prowl", bot) && master && botAI->HasAnyAuraOf(master, "stealth", "prowl", nullptr);
+}
+}
 
 bool CastBearFormAction::isUseful()
 {
@@ -39,6 +49,9 @@ bool CastCasterFormAction::Execute(Event /*event*/)
 
 bool CastCasterFormAction::isUseful()
 {
+    if (ShouldPreserveProwl(botAI, bot))
+        return false;
+
     return botAI->HasAnyAuraOf(GetTarget(), "dire bear form", "bear form", "cat form", "travel form", "aquatic form",
                                "flight form", "swift flight form", "moonkin form", nullptr) &&
            AI_VALUE2(uint8, "mana", "self target") > sPlayerbotAIConfig.mediumHealth;

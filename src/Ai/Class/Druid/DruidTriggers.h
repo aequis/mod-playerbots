@@ -450,4 +450,20 @@ public:
     bool IsActive() override;
 };
 
+class FollowMasterProwlTrigger : public Trigger
+{
+public:
+    FollowMasterProwlTrigger(PlayerbotAI* botAI) : Trigger(botAI, "follow master prowl") {}
+
+    bool IsActive() override;
+};
+
+class FollowMasterUnprowlTrigger : public Trigger
+{
+public:
+    FollowMasterUnprowlTrigger(PlayerbotAI* botAI) : Trigger(botAI, "follow master unprowl") {}
+
+    bool IsActive() override;
+};
+
 #endif
