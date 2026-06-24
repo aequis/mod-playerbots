@@ -89,6 +89,22 @@ public:
     bool IsActive() override;
 };
 
+class FollowMasterStealthTrigger : public Trigger
+{
+public:
+    FollowMasterStealthTrigger(PlayerbotAI* botAI) : Trigger(botAI, "follow master stealth") {}
+
+    bool IsActive() override;
+};
+
+class FollowMasterUnstealthTrigger : public Trigger
+{
+public:
+    FollowMasterUnstealthTrigger(PlayerbotAI* botAI) : Trigger(botAI, "follow master unstealth") {}
+
+    bool IsActive() override;
+};
+
 class SapTrigger : public HasCcTargetTrigger
 {
 public:

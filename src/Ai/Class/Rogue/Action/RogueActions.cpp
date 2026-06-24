@@ -17,6 +17,12 @@ constexpr uint32 SPELL_WARSONG_FLAG = 23333;
 constexpr uint32 SPELL_SILVERWING_FLAG = 23335;
 constexpr uint32 SPELL_NETHERSTORM_FLAG = 34976;
 constexpr uint32 SPELL_MASTER_POISONER_RANK_3 = 58410;
+
+bool IsMasterStealthed(PlayerbotAI* botAI)
+{
+    Unit* master = botAI->GetMaster();
+    return master && botAI->HasAnyAuraOf(master, "stealth", "prowl", nullptr);
+}
 }
 
 bool CastStealthAction::isUseful()
@@ -36,6 +42,9 @@ bool CastStealthAction::isPossible()
 
 bool UnstealthAction::Execute(Event /*event*/)
 {
+    if (IsMasterStealthed(botAI))
+        return false;
+
     botAI->RemoveAura("stealth");
     // botAI->ChangeStrategy("+dps,-stealthed", BOT_STATE_COMBAT);
 

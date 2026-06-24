@@ -13,6 +13,12 @@ namespace
 {
 constexpr uint32 SPELL_STEALTH = 1784;
 constexpr uint32 SPELL_SPRINT_RANK_1 = 2983;
+
+bool IsMasterStealthed(PlayerbotAI* botAI)
+{
+    Unit* master = botAI->GetMaster();
+    return master && botAI->HasAnyAuraOf(master, "stealth", "prowl", nullptr);
+}
 }
 
 // bool AdrenalineRushTrigger::isPossible()
@@ -23,6 +29,9 @@ constexpr uint32 SPELL_SPRINT_RANK_1 = 2983;
 bool UnstealthTrigger::IsActive()
 {
     if (!botAI->HasAura("stealth", bot))
+        return false;
+
+    if (IsMasterStealthed(botAI))
         return false;
 
     return botAI->HasAura("stealth", bot) && !AI_VALUE(uint8, "attacker count") &&
@@ -37,6 +46,9 @@ bool StealthTrigger::IsActive()
 {
     if (bot->HasAura(SPELL_STEALTH) || bot->IsInCombat() || bot->HasSpellCooldown(SPELL_STEALTH))
         return false;
+
+    if (IsMasterStealthed(botAI))
+        return true;
 
     float distance = 30.f;
 
@@ -67,6 +79,17 @@ bool StealthTrigger::IsActive()
         distance += 15;
 
     return target && ServerFacade::instance().GetDistance2d(bot, target) < distance;
+}
+
+bool FollowMasterStealthTrigger::IsActive()
+{
+    return !bot->HasAura(SPELL_STEALTH) && !bot->IsInCombat() && !bot->HasSpellCooldown(SPELL_STEALTH) &&
+           IsMasterStealthed(botAI);
+}
+
+bool FollowMasterUnstealthTrigger::IsActive()
+{
+    return bot->HasAura(SPELL_STEALTH) && !bot->IsInCombat() && botAI->GetMaster() && !IsMasterStealthed(botAI);
 }
 
 bool SapTrigger::IsPossible() { return bot->GetLevel() > 10 && botAI->HasSpell("sap") && !bot->IsInCombat(); }

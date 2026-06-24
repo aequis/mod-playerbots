@@ -8,11 +8,23 @@
 #include "Event.h"
 #include "Playerbots.h"
 
+namespace
+{
+bool ShouldPreserveMasterStealth(PlayerbotAI* botAI, Player* bot)
+{
+    Unit* master = botAI->GetMaster();
+    return bot->HasAura(SPELL_AURA_MOD_STEALTH) && master && botAI->HasAnyAuraOf(master, "stealth", "prowl", nullptr);
+}
+}
+
 ImbueWithPoisonAction::ImbueWithPoisonAction(PlayerbotAI* botAI) : Action(botAI, "apply poison") {}
 
 bool ImbueWithPoisonAction::Execute(Event /*event*/)
 {
     if (bot->IsInCombat())
+        return false;
+
+    if (ShouldPreserveMasterStealth(botAI, bot))
         return false;
 
     // remove stealth
@@ -108,6 +120,9 @@ bool ImbueWithStoneAction::Execute(Event /*event*/)
     if (bot->IsInCombat())
         return false;
 
+    if (ShouldPreserveMasterStealth(botAI, bot))
+        return false;
+
     // remove stealth
     if (bot->HasAura(SPELL_AURA_MOD_STEALTH))
         bot->RemoveAurasByType(SPELL_AURA_MOD_STEALTH);
@@ -151,6 +166,9 @@ ImbueWithOilAction::ImbueWithOilAction(PlayerbotAI* botAI) : Action(botAI, "appl
 bool ImbueWithOilAction::Execute(Event /*event*/)
 {
     if (bot->IsInCombat())
+        return false;
+
+    if (ShouldPreserveMasterStealth(botAI, bot))
         return false;
 
     // remove stealth
