@@ -18,10 +18,13 @@
 #include "Playerbots.h"
 
 #include "BattlefieldScript.h"
+#include "CellImpl.h"
 #include "Channel.h"
 #include "Config.h"
+#include "CreatureAI.h"
 #include "DatabaseEnv.h"
 #include "DatabaseLoader.h"
+#include "GridNotifiersImpl.h"
 #include "GuildTaskMgr.h"
 #include "PlayerScript.h"
 #include "PlayerbotAIConfig.h"
@@ -31,8 +34,13 @@
 #include "RandomPlayerbotMgr.h"
 #include "ScriptMgr.h"
 #include "PlayerbotCommandScript.h"
+#include "UnitScript.h"
+#include "World.h"
 #include "cmath"
 #include "BattleGroundTactics.h"
+#include <list>
+#include <unordered_map>
+#include <unordered_set>
 
 class PlayerbotsDatabaseScript : public DatabaseScript
 {
@@ -73,6 +81,120 @@ public:
 
         if (revision.empty())
             revision = "Unknown Playerbots Database Revision";
+    }
+};
+
+class PlayerbotsSameFactionFfaGuardScript : public UnitScript
+{
+public:
+    PlayerbotsSameFactionFfaGuardScript() : UnitScript("PlayerbotsSameFactionFfaGuardScript", true, {
+        UNITHOOK_IF_NORMAL_REACTION,
+        UNITHOOK_ON_UNIT_DEATH
+    }) {}
+
+    uint32 DealDamage(Unit* attacker, Unit* victim, uint32 damage, DamageEffectType /*damagetype*/) override
+    {
+        if (!damage || !attacker || !victim || !sWorld->IsFFAPvPRealm())
+            return damage;
+
+        Player* attackerPlayer = attacker->GetCharmerOrOwnerPlayerOrPlayerItself();
+        Player* victimPlayer = victim->GetCharmerOrOwnerPlayerOrPlayerItself();
+        if (!attackerPlayer || !victimPlayer || attackerPlayer == victimPlayer)
+            return damage;
+
+        if (attackerPlayer->duel && attackerPlayer->duel->Opponent == victimPlayer)
+            return damage;
+
+        if (attackerPlayer->InBattleground() || attackerPlayer->GetTeamId() != victimPlayer->GetTeamId())
+            return damage;
+
+        if (IsDefensiveRetaliation(attackerPlayer, victimPlayer))
+            return damage;
+
+        MarkSameFactionOffender(attackerPlayer, victimPlayer);
+        AlertNearbyGuards(attackerPlayer);
+
+        return damage;
+    }
+
+    bool IfNormalReaction(Unit const* unit, Unit const* target, ReputationRank& repRank) override
+    {
+        Creature const* creature = unit ? unit->ToCreature() : nullptr;
+        Player const* player = target ? target->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
+        if (!creature || !creature->IsGuard() || !player || !IsMarked(player))
+            return true;
+
+        repRank = REP_HOSTILE;
+        return false;
+    }
+
+    void OnUnitDeath(Unit* unit, Unit* /*killer*/) override
+    {
+        Player* player = unit ? unit->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
+        if (!player)
+            return;
+
+        ClearIncidentsFor(player->GetGUID());
+    }
+
+private:
+    struct GuardIncident
+    {
+        std::unordered_set<ObjectGuid> victims;
+    };
+
+    static std::unordered_map<ObjectGuid, GuardIncident>& Incidents()
+    {
+        static std::unordered_map<ObjectGuid, GuardIncident> incidents;
+        return incidents;
+    }
+
+    static bool IsMarked(Player const* player)
+    {
+        return player && Incidents().find(player->GetGUID()) != Incidents().end();
+    }
+
+    static bool IsDefensiveRetaliation(Player const* attacker, Player const* victim)
+    {
+        if (!attacker || !victim)
+            return false;
+
+        auto itr = Incidents().find(victim->GetGUID());
+        return itr != Incidents().end() && itr->second.victims.find(attacker->GetGUID()) != itr->second.victims.end();
+    }
+
+    static void MarkSameFactionOffender(Player* attacker, Player* victim)
+    {
+        Incidents()[attacker->GetGUID()].victims.insert(victim->GetGUID());
+
+        // The incident table is the durable guard marker; this also refreshes AzerothCore's temporary contested flag.
+        attacker->SetContestedPvP(victim, false);
+    }
+
+    static void ClearIncidentsFor(ObjectGuid const& guid)
+    {
+        Incidents().erase(guid);
+    }
+
+    static void AlertNearbyGuards(Player* offender)
+    {
+        std::list<Unit*> units;
+        Acore::AnyUnitInObjectRangeCheck check(offender, MAX_AGGRO_RADIUS);
+        Acore::UnitListSearcher<Acore::AnyUnitInObjectRangeCheck> searcher(offender, units, check);
+        Cell::VisitObjects(offender, searcher, MAX_AGGRO_RADIUS);
+
+        for (Unit* unit : units)
+        {
+            Creature* guard = unit ? unit->ToCreature() : nullptr;
+            if (!guard || !guard->IsGuard() || !guard->IsAlive() || !guard->CanSeeOrDetect(offender, true, true, false))
+                continue;
+
+            if (!guard->IsValidAttackTarget(offender))
+                continue;
+
+            guard->AddThreat(offender, 0.0f);
+            guard->AI()->AttackStart(offender);
+        }
     }
 };
 
@@ -533,6 +655,7 @@ void AddPlayerbotsScripts()
 {
     new PlayerbotsBattlefieldScript();
     new PlayerbotsDatabaseScript();
+    new PlayerbotsSameFactionFfaGuardScript();
     new PlayerbotsPlayerScript();
     new PlayerbotsMiscScript();
     new PlayerbotsServerScript();
