@@ -417,7 +417,26 @@ void PlayerbotAI::UpdateAIGroupMaster()
 
     bool IsRandomBot = sRandomPlayerbotMgr.IsRandomBot(bot);
 
-    // If bot is not in group verify that for is RandomBot before clearing  master and resetting.
+    // If the bot no longer shares a group with its master, stop treating that
+    // player as the active follow target. Only random bots need the heavier
+    // state reset here; alt/addclass bots can keep their default strategies.
+    if (master && !bot->InBattleground())
+    {
+        Group* masterGroup = master->GetGroup();
+        if (!group || !masterGroup || masterGroup != group)
+        {
+            SetMaster(nullptr);
+            master = nullptr;
+
+            if (IsRandomBot)
+            {
+                Reset(true);
+                ResetStrategies();
+            }
+        }
+    }
+
+    // If bot is not in group verify that for is RandomBot before clearing master and resetting.
     if (!group)
     {
         if (master && IsRandomBot)
